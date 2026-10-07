@@ -1,13 +1,41 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+
+// Ambil variabel environment (fleksibel membaca dengan/tanpa prefix NEXT_PUBLIC_)
+const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.PUBLIC_SUPABASE_ANON_KEY || '';
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+    // 1. Ambil Authorization Token dari Header Request
+    const authHeader = req.headers.get('Authorization');
+    const token = authHeader?.split(' ')[1];
 
+    if (!token) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Harap login terlebih dahulu' },
+        { status: 401 }
+      );
+    }
+
+    // 2. Verifikasi Token Supabase untuk mendapatkan data User
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !user) {
+      return NextResponse.json(
+        { success: false, error: 'Session tidak valid atau kadaluarsa' },
+        { status: 401 }
+      );
+    }
+
+    // 3. Validasi API Key Gemini
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: 'API Key Gemini belum ada di .env.local' },
+        { success: false, error: 'API Key Gemini belum ada di Environment Variables' },
         { status: 400 }
       );
     }
@@ -136,6 +164,28 @@ Format JSON Wajib untuk Manual Adjust / Set Saldo:
           account: detectedAccount,
           date: new Date().toISOString().split('T')[0],
         };
+      }
+    }
+
+    // 4. Simpan Otomatis Hasil Ekstraksi Transaksi ke Supabase Beserta user_id
+    if (!parsedData.isReset) {
+      const { error: dbError } = await supabase
+        .from('transactions')
+        .insert([
+          {
+            title: parsedData.title,
+            amount: parsedData.amount,
+            type: parsedData.type,
+            category: parsedData.category,
+            account: parsedData.account,
+            date: parsedData.date,
+            exclude_from_stats: parsedData.excludeFromStats,
+            user_id: user.id, // Menyimpan ID user yang sedang login
+          },
+        ]);
+
+      if (dbError) {
+        console.error('❌ Error simpan ke Supabase:', dbError);
       }
     }
 

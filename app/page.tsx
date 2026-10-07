@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Send, Upload, Wallet, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, Trash2, Edit3, X, Check, Calendar, Banknote, Building2, TrendingUp, PieChart as PieChartIcon, ShieldAlert, Sliders, AlertTriangle } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Send, Upload, Wallet, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, Trash2, Edit3, X, Check, Calendar, Banknote, Building2, TrendingUp, PieChart as PieChartIcon, ShieldAlert, Sliders, AlertTriangle, LogOut } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 
 interface Transaction {
@@ -14,6 +15,7 @@ interface Transaction {
   account?: 'cash' | 'bank' | 'investment';
   date: string;
   created_at?: string;
+  user_id?: string;
 }
 
 const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#06b6d4', '#f43f5e', '#64748b'];
@@ -24,6 +26,8 @@ export default function Home() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [timeframe, setTimeframe] = useState<'all' | 'today' | 'weekly' | 'monthly'>('monthly');
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const router = useRouter();
 
   // State Adjust Saldo
   const [adjustModal, setAdjustModal] = useState<{ open: boolean; account: 'cash' | 'bank' | 'investment'; currentBal: number }>({ open: false, account: 'bank', currentBal: 0 });
@@ -36,18 +40,42 @@ export default function Home() {
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchTransactions();
+    checkUserAndFetch();
   }, []);
 
-  const fetchTransactions = async () => {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .order('created_at', { ascending: false });
+  const checkUserAndFetch = async () => {
+    // 1. Cek session user saat ini
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session) {
+      // Jika belum login, redirect ke /login
+      router.push('/login');
+      return;
+    }
+
+    setUserEmail(session.user.email || 'User');
+    fetchTransactions(session.user.id);
+  };
+
+  const fetchTransactions = async (userId?: string) => {
+    let query = supabase.from('transactions').select('*').order('created_at', { ascending: false });
+    
+    // RLS otomatis memfilter data berdasarkan user_id, namun memfilter eksplisit juga sangat disarankan
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query;
 
     if (!error && data) {
       setTransactions(data as Transaction[]);
     }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/login');
+    router.refresh();
   };
 
   // Filter Waktu
@@ -96,6 +124,9 @@ export default function Home() {
 
   // Eksekusi Adjust
   const executeResetAccount = async (accountType: 'cash' | 'bank' | 'investment', targetAmount: number = 0) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
     const currentBal = calculateAccountBalance(accountType);
     const diff = targetAmount - currentBal;
 
@@ -115,11 +146,12 @@ export default function Home() {
         category: 'Adjustment/Transfer',
         account: accountType,
         date: new Date().toISOString().split('T')[0],
+        user_id: session.user.id,
       },
     ]);
 
     if (!error) {
-      fetchTransactions();
+      fetchTransactions(session.user.id);
       setAdjustModal({ open: false, account: 'bank', currentBal: 0 });
     }
   };
@@ -134,11 +166,12 @@ export default function Home() {
   const confirmDelete = async () => {
     if (!deleteTargetId) return;
 
+    const { data: { session } } = await supabase.auth.getSession();
     const { error } = await supabase.from('transactions').delete().eq('id', deleteTargetId);
 
     if (!error) {
       setDeleteTargetId(null);
-      fetchTransactions();
+      if (session) fetchTransactions(session.user.id);
     }
   };
 
@@ -146,6 +179,8 @@ export default function Home() {
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingTransaction) return;
+
+    const { data: { session } } = await supabase.auth.getSession();
 
     const { error } = await supabase
       .from('transactions')
@@ -161,7 +196,7 @@ export default function Home() {
 
     if (!error) {
       setEditingTransaction(null);
-      fetchTransactions();
+      if (session) fetchTransactions(session.user.id);
     }
   };
 
@@ -169,6 +204,13 @@ export default function Home() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input && !selectedFile) return;
+
+    // 1. Ambil session user aktif
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      router.push('/login');
+      return;
+    }
 
     setLoading(true);
     let imageBase64: string | null = null;
@@ -185,9 +227,13 @@ export default function Home() {
     }
 
     try {
+      // 2. Kirim Request ke API Route dengan Authorization Token Header
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`, // <--- PENTING: Sertakan Token Supabase User
+        },
         body: JSON.stringify({ prompt: input, imageBase64 }),
       });
 
@@ -200,25 +246,13 @@ export default function Home() {
           setInput('');
           setSelectedFile(null);
         } else {
-          const { title, amount, type, category, account, date, excludeFromStats } = result.data;
-
-          const { error: dbError } = await supabase.from('transactions').insert([
-            { 
-              title, 
-              amount, 
-              type, 
-              account: account || 'bank', 
-              date,
-              category: excludeFromStats ? 'Adjustment/Transfer' : category
-            }
-          ]);
-
-          if (!dbError) {
-            setInput('');
-            setSelectedFile(null);
-            fetchTransactions();
-          }
+          // Backend API Route (/api/chat) sudah menyimpan otomatis ke Supabase dengan user_id
+          setInput('');
+          setSelectedFile(null);
+          fetchTransactions(session.user.id);
         }
+      } else if (result.error) {
+        alert(`Error: ${result.error}`);
       }
     } catch (err) {
       console.error(err);
@@ -257,45 +291,68 @@ export default function Home() {
         
         {/* Header */}
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-100">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2">
-              <Wallet className="text-emerald-600" size={24} /> Piggy Bank AI
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-500">Smart Financial Tracker</p>
+          <div className="flex items-center justify-between w-full sm:w-auto">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2">
+                <Wallet className="text-emerald-600" size={24} /> Piggy Bank AI
+              </h1>
+              <p className="text-xs text-slate-500">
+                Logged in as: <span className="font-semibold text-slate-700">{userEmail}</span>
+              </p>
+            </div>
+            
+            {/* Logout Mobile */}
+            <button
+              onClick={handleLogout}
+              className="sm:hidden p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition"
+              title="Logout"
+            >
+              <LogOut size={18} />
+            </button>
           </div>
 
-          <div className="grid grid-cols-4 bg-slate-100 p-1 rounded-xl gap-1 text-[11px] sm:text-xs font-semibold text-slate-600">
+          <div className="flex items-center gap-2">
+            <div className="grid grid-cols-4 bg-slate-100 p-1 rounded-xl gap-1 text-[11px] sm:text-xs font-semibold text-slate-600 flex-1 sm:flex-none">
+              <button
+                onClick={() => setTimeframe('today')}
+                className={`py-1.5 px-2 text-center rounded-lg transition ${
+                  timeframe === 'today' ? 'bg-white text-indigo-600 shadow-sm' : 'hover:text-slate-900'
+                }`}
+              >
+                Hari Ini
+              </button>
+              <button
+                onClick={() => setTimeframe('weekly')}
+                className={`py-1.5 px-2 text-center rounded-lg transition ${
+                  timeframe === 'weekly' ? 'bg-white text-indigo-600 shadow-sm' : 'hover:text-slate-900'
+                }`}
+              >
+                Minggu Ini
+              </button>
+              <button
+                onClick={() => setTimeframe('monthly')}
+                className={`py-1.5 px-2 text-center rounded-lg transition ${
+                  timeframe === 'monthly' ? 'bg-white text-indigo-600 shadow-sm' : 'hover:text-slate-900'
+                }`}
+              >
+                Bulan Ini
+              </button>
+              <button
+                onClick={() => setTimeframe('all')}
+                className={`py-1.5 px-2 text-center rounded-lg transition ${
+                  timeframe === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'hover:text-slate-900'
+                }`}
+              >
+                Semua
+              </button>
+            </div>
+
+            {/* Logout Desktop */}
             <button
-              onClick={() => setTimeframe('today')}
-              className={`py-1.5 px-2 text-center rounded-lg transition ${
-                timeframe === 'today' ? 'bg-white text-indigo-600 shadow-sm' : 'hover:text-slate-900'
-              }`}
+              onClick={handleLogout}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition"
             >
-              Hari Ini
-            </button>
-            <button
-              onClick={() => setTimeframe('weekly')}
-              className={`py-1.5 px-2 text-center rounded-lg transition ${
-                timeframe === 'weekly' ? 'bg-white text-indigo-600 shadow-sm' : 'hover:text-slate-900'
-              }`}
-            >
-              Minggu Ini
-            </button>
-            <button
-              onClick={() => setTimeframe('monthly')}
-              className={`py-1.5 px-2 text-center rounded-lg transition ${
-                timeframe === 'monthly' ? 'bg-white text-indigo-600 shadow-sm' : 'hover:text-slate-900'
-              }`}
-            >
-              Bulan Ini
-            </button>
-            <button
-              onClick={() => setTimeframe('all')}
-              className={`py-1.5 px-2 text-center rounded-lg transition ${
-                timeframe === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'hover:text-slate-900'
-              }`}
-            >
-              Semua
+              <LogOut size={15} /> Logout
             </button>
           </div>
         </header>
