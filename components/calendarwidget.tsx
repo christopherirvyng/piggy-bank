@@ -82,16 +82,16 @@ export default function CalendarWidget({
   };
 
   return (
-    <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-2.5 font-sans select-none cursor-default">
-      <div className="flex justify-between items-center">
-        <h3 className="font-semibold text-slate-900 text-xs flex items-center gap-1.5 cursor-default">
+    <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-2 font-sans select-none cursor-default">
+      <div className="flex justify-between items-center pb-1 border-b border-slate-100">
+        <h3 className="font-semibold text-slate-900 text-xs flex items-center gap-1.5">
           <CalendarIcon size={14} className="text-indigo-600 shrink-0" /> Calendar & Activity
         </h3>
         <div className="flex items-center gap-1">
           <button onClick={prevMonth} className="p-1 text-slate-400 hover:text-slate-700 transition cursor-pointer">
             <ChevronLeft size={14} />
           </button>
-          <span className="text-xs font-semibold text-slate-800 min-w-[90px] text-center cursor-default">
+          <span className="text-xs font-semibold text-slate-800 min-w-[80px] text-center">
             {monthNames[month]} {year}
           </span>
           <button onClick={nextMonth} className="p-1 text-slate-400 hover:text-slate-700 transition cursor-pointer">
@@ -100,13 +100,13 @@ export default function CalendarWidget({
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-tight pb-1 border-b border-slate-100 cursor-default">
+      <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-tight">
         <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
       </div>
 
       <div className="grid grid-cols-7 gap-1">
         {Array.from({ length: firstDayOfMonth }).map((_, i) => (
-          <div key={`empty-${i}`} className="h-8" />
+          <div key={`empty-${i}`} className="h-7" />
         ))}
 
         {Array.from({ length: daysInMonth }).map((_, i) => {
@@ -123,17 +123,15 @@ export default function CalendarWidget({
             <div
               key={`day-${day}`}
               onClick={() => handleDayClick(day)}
-              className={`h-8 rounded-xl p-0.5 flex flex-col justify-between items-center transition relative ${
-                hasData ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400/50' : 'cursor-default'
-              } ${
+              className={`h-7 rounded-lg p-0.5 flex flex-col justify-between items-center transition relative ${                 hasData ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400/50' : 'cursor-default'               } ${
                 isToday
                   ? 'bg-indigo-600 text-white font-bold shadow-sm'
-                  : 'bg-slate-50/70 hover:bg-slate-100 text-slate-700'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
               }`}
             >
-              <span className="text-[10px] leading-none mt-0.5 cursor-default">{day}</span>
+              <span className="text-[10px] leading-none mt-0.5">{day}</span>
 
-              <div className="flex flex-col items-center leading-none text-[8px] font-medium w-full truncate px-0.5 mb-0.5 cursor-default">
+              <div className="flex flex-col items-center leading-none text-[8px] font-medium w-full truncate px-0.5 mb-0.5">
                 {income > 0 && (
                   <span className={isToday ? 'text-emerald-200' : 'text-emerald-600 font-semibold'}>
                     +{formatShortAmount(income)}
@@ -150,7 +148,7 @@ export default function CalendarWidget({
         })}
       </div>
 
-      {/* Modal Detail Transaksi per Hari */}
+      {/* Modal Activity per Hari */}
       {selectedDayTransactions && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-xs w-full p-4 shadow-xl space-y-3 border border-slate-100">
@@ -163,21 +161,20 @@ export default function CalendarWidget({
               </button>
             </div>
 
-            <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
               {selectedDayTransactions.items.map((item) => (
                 <div key={item.id} className="p-2 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center text-xs">
                   <div>
                     <p className="font-semibold text-slate-800">{item.title}</p>
-                    <p className="text-[9px] text-slate-400 capitalize">{item.category || 'General'} • {item.account || 'bank'}</p>
+                    <p className="text-[10px] text-slate-400 capitalize">{item.category || 'General'} • {item.account || 'bank'}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`font-bold text-[11px] ${item.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    <span className={`font-bold text-xs ${item.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {item.type === 'income' ? '+' : '-'}Rp {Number(item.amount).toLocaleString('id-ID')}
                     </span>
                     <button 
                       onClick={() => handleDeleteFromCalendar(item.id)} 
                       className="text-slate-400 hover:text-rose-600 transition p-0.5 cursor-pointer"
-                      title="Delete Transaction"
                     >
                       <Trash2 size={13} />
                     </button>

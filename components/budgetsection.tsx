@@ -29,7 +29,7 @@ const isCategoryMatch = (transCat: string, budgetCat: string) => {
   return isFoodBudget && isFoodTrans;
 };
 
-export default function BudgetSection({ transactions }: { transactions: Transaction[] }) {
+export default function BudgetSection({ transactions = [] }: { transactions?: Transaction[] }) {
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [category, setCategory] = useState('Food & Beverage');
   const [displayMonthlyInput, setDisplayMonthlyInput] = useState('');
@@ -46,8 +46,14 @@ export default function BudgetSection({ transactions }: { transactions: Transact
   }, []);
 
   const fetchBudgets = async () => {
-    const { data } = await supabase.from('budgets').select('*');
-    if (data) setBudgets(data);
+    try {
+      const { data, error } = await supabase.from('budgets').select('*');
+      if (!error && data) {
+        setBudgets(data);
+      }
+    } catch (err) {
+      console.error('Error fetching budgets:', err);
+    }
   };
 
   const formatNumber = (val: string) => {
@@ -77,30 +83,43 @@ export default function BudgetSection({ transactions }: { transactions: Transact
     if (!category || rawMonthlyInput <= 0) return;
     setLoading(true);
 
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Sesi login telah berakhir, silakan login kembali.');
+        setLoading(false);
+        return;
+      }
 
-    const existing = budgets.find(b => b.category.toLowerCase() === category.toLowerCase());
+      const existing = budgets.find(b => b.category.toLowerCase() === category.toLowerCase());
 
-    if (existing) {
-      await supabase
-        .from('budgets')
-        .update({ monthly_limit: rawMonthlyInput })
-        .eq('id', existing.id);
-    } else {
-      await supabase.from('budgets').insert([
-        { 
-          category, 
-          monthly_limit: rawMonthlyInput, 
-          user_id: session.user.id 
-        }
-      ]);
+      if (existing) {
+        const { error } = await supabase
+          .from('budgets')
+          .update({ monthly_limit: rawMonthlyInput })
+          .eq('id', existing.id);
+
+        if (error) alert(`Gagal mengupdate budget: ${error.message}`);
+      } else {
+        const { error } = await supabase.from('budgets').insert([
+          { 
+            category, 
+            monthly_limit: rawMonthlyInput, 
+            user_id: session.user.id 
+          }
+        ]);
+
+        if (error) alert(`Gagal menambah budget: ${error.message}`);
+      }
+
+      setDisplayMonthlyInput('');
+      setRawMonthlyInput(0);
+      fetchBudgets();
+    } catch (err) {
+      console.error('Error adding budget:', err);
+    } finally {
+      setLoading(false);
     }
-
-    setDisplayMonthlyInput('');
-    setRawMonthlyInput(0);
-    fetchBudgets();
-    setLoading(false);
   };
 
   const handleSaveEdit = async (id: string) => {
@@ -113,12 +132,18 @@ export default function BudgetSection({ transactions }: { transactions: Transact
     if (!error) {
       setEditingBudget(null);
       fetchBudgets();
+    } else {
+      alert(`Gagal menyimpan perubahan: ${error.message}`);
     }
   };
 
   const handleDeleteBudget = async (id: string) => {
     const { error } = await supabase.from('budgets').delete().eq('id', id);
-    if (!error) fetchBudgets();
+    if (!error) {
+      fetchBudgets();
+    } else {
+      alert(`Gagal menghapus budget: ${error.message}`);
+    }
   };
 
   const calculateRollover = (b: Budget) => {
@@ -127,9 +152,11 @@ export default function BudgetSection({ transactions }: { transactions: Transact
     const daysInCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 
     const dailyAllowance = b.monthly_limit / daysInCurrentMonth;
+    const safeTransactions = transactions || [];
 
-    const todaySpent = transactions
+    const todaySpent = safeTransactions
       .filter((t) => {
+        if (!t.date) return false;
         const d = new Date(t.date);
         return (
           t.type === 'expense' &&
@@ -139,10 +166,11 @@ export default function BudgetSection({ transactions }: { transactions: Transact
           d.getFullYear() === now.getFullYear()
         );
       })
-      .reduce((acc, curr) => acc + Number(curr.amount), 0);
+      .reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
 
-    const monthlySpent = transactions
+    const monthlySpent = safeTransactions
       .filter((t) => {
+        if (!t.date) return false;
         const d = new Date(t.date);
         return (
           t.type === 'expense' &&
@@ -151,7 +179,7 @@ export default function BudgetSection({ transactions }: { transactions: Transact
           d.getFullYear() === now.getFullYear()
         );
       })
-      .reduce((acc, curr) => acc + Number(curr.amount), 0);
+      .reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
 
     const accruedBudgetTillToday = dailyAllowance * currentDay;
     const cumulativeBonus = accruedBudgetTillToday - monthlySpent;
@@ -166,11 +194,14 @@ export default function BudgetSection({ transactions }: { transactions: Transact
   };
 
   return (
-    <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3 font-sans">
-      <div className="flex justify-between items-center">
-        <h3 className="font-semibold text-slate-900 text-xs flex items-center gap-1.5">
-          <PiggyBank size={15} className="text-indigo-600" /> Monthly Budget & Rollover
+    <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3 font-sans select-none cursor-default">
+      <div className="flex justify-between items-center pb-1 border-b border-slate-100">
+        <h3 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+          <PiggyBank size={15} className="text-indigo-600 shrink-0" /> Monthly Budget & Rollover
         </h3>
+        <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
+          {budgets.length} Categories
+        </span>
       </div>
 
       {/* Form Input Budget */}
@@ -178,7 +209,7 @@ export default function BudgetSection({ transactions }: { transactions: Transact
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          className="flex-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-[11px]"
+          className="flex-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs cursor-pointer"
         >
           <option value="Food & Beverage">Food & Beverage</option>
           <option value="Transportation">Transportation</option>
@@ -189,13 +220,13 @@ export default function BudgetSection({ transactions }: { transactions: Transact
         </select>
         
         <div className="relative flex-1">
-          <span className="absolute left-2.5 top-2 text-slate-400 font-medium text-[11px]">Rp</span>
+          <span className="absolute left-2.5 top-1.5 text-slate-400 font-medium text-xs">Rp</span>
           <input
             type="text"
             placeholder="1.500.000"
             value={displayMonthlyInput}
             onChange={handleInputChange}
-            className="w-full pl-7 pr-2 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-[11px]"
+            className="w-full pl-7 pr-2 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs cursor-text"
             required
           />
         </div>
@@ -203,28 +234,28 @@ export default function BudgetSection({ transactions }: { transactions: Transact
         <button
           type="submit"
           disabled={loading}
-          className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl font-medium flex items-center gap-1 hover:bg-indigo-700 disabled:opacity-50 transition text-[11px] shadow-sm"
+          className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl font-semibold flex items-center gap-1 hover:bg-indigo-700 disabled:opacity-50 transition text-xs shadow-sm cursor-pointer"
         >
-          <Plus size={13} /> Set
+          <Plus size={13} /> Add
         </button>
       </form>
 
       {/* List Budget Cards */}
       <div className="space-y-2 pt-0.5">
         {budgets.length === 0 ? (
-          <p className="text-[11px] font-normal text-slate-400 text-center py-2">No monthly budget set yet.</p>
+          <p className="text-xs text-slate-400 text-center py-3">No monthly budget set yet.</p>
         ) : (
           budgets.map((b) => {
             const { daysInCurrentMonth, dailyAllowance, todaySpent, monthlySpent, cumulativeBonus } = calculateRollover(b);
-            const monthlyPercent = Math.min(Math.round((monthlySpent / b.monthly_limit) * 100), 100);
+            const monthlyPercent = b.monthly_limit > 0 ? Math.min(Math.round((monthlySpent / b.monthly_limit) * 100), 100) : 0;
             const isEditing = editingBudget?.id === b.id;
 
             return (
-              <div key={b.id} className="p-3 border border-slate-100 rounded-xl bg-slate-50/50 space-y-2 text-xs">
+              <div key={b.id} className="p-3 border border-slate-100 rounded-xl bg-slate-50/60 space-y-2 text-xs">
                 <div className="flex justify-between items-center">
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <span className="font-semibold text-slate-800 text-xs">{b.category}</span>
+                      <span className="font-bold text-slate-800 text-xs">{b.category}</span>
                       
                       <button
                         onClick={() => {
@@ -233,59 +264,59 @@ export default function BudgetSection({ transactions }: { transactions: Transact
                           setEditLimitInput(formatted);
                           setRawEditLimit(numeric);
                         }}
-                        className="p-0.5 text-slate-400 hover:text-indigo-600 transition"
+                        className="p-0.5 text-slate-400 hover:text-indigo-600 transition cursor-pointer"
                         title="Edit Budget"
                       >
                         <Edit2 size={12} />
                       </button>
                       <button
                         onClick={() => handleDeleteBudget(b.id)}
-                        className="p-0.5 text-slate-400 hover:text-rose-600 transition"
+                        className="p-0.5 text-slate-400 hover:text-rose-600 transition cursor-pointer"
                         title="Delete Budget"
                       >
                         <Trash2 size={12} />
                       </button>
                     </div>
 
-                    <p className="text-[10px] font-normal text-slate-400 flex items-center gap-1 mt-0.5">
-                      <Calendar size={11} /> Daily Allowance ({daysInCurrentMonth} Days): <strong className="text-slate-700 font-semibold">Rp {Math.round(dailyAllowance).toLocaleString('id-ID')}/day</strong>
+                    <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                      <Calendar size={11} /> Daily Allowance ({daysInCurrentMonth} Days): <strong className="text-slate-700 font-semibold">Rp {Math.round(dailyAllowance).toLocaleString('id-ID')}</strong>
                     </p>
                   </div>
 
-                  {/* Form In-Place Edit Budget Limit */}
+                  {/* Form Edit Limit */}
                   <div className="text-right">
                     {isEditing ? (
                       <div className="flex items-center gap-1">
-                        <span className="text-[10px] font-medium text-slate-400">Rp</span>
+                        <span className="text-xs text-slate-400">Rp</span>
                         <input
                           type="text"
                           value={editLimitInput}
                           onChange={handleEditInputChange}
-                          className="w-20 px-1.5 py-0.5 bg-white border border-slate-300 rounded-md text-[11px] font-medium text-slate-800"
+                          className="w-20 px-1.5 py-0.5 bg-white border border-slate-300 rounded-md text-xs font-semibold text-slate-800 cursor-text"
                         />
-                        <button onClick={() => handleSaveEdit(b.id)} className="p-0.5 text-emerald-600 hover:bg-emerald-50 rounded">
+                        <button onClick={() => handleSaveEdit(b.id)} className="p-0.5 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer">
                           <Check size={13} />
                         </button>
-                        <button onClick={() => setEditingBudget(null)} className="p-0.5 text-slate-400 hover:bg-slate-100 rounded">
+                        <button onClick={() => setEditingBudget(null)} className="p-0.5 text-slate-400 hover:bg-slate-100 rounded cursor-pointer">
                           <X size={13} />
                         </button>
                       </div>
                     ) : (
                       <>
-                        <p className="text-[11px] font-semibold text-slate-800">
+                        <p className="text-xs font-bold text-slate-800">
                           Rp {monthlySpent.toLocaleString('id-ID')} / <span className="text-slate-400 font-normal">Rp {Number(b.monthly_limit).toLocaleString('id-ID')}</span>
                         </p>
-                        <p className="text-[10px] font-normal text-slate-400">Monthly Usage ({monthlyPercent}%)</p>
+                        <p className="text-[10px] text-slate-400">Usage ({monthlyPercent}%)</p>
                       </>
                     )}
                   </div>
                 </div>
 
-                {/* Status Box (Today Spent & Accumulated Savings) */}
+                {/* Status Box */}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="p-2 bg-white rounded-lg border border-slate-100">
                     <p className="text-[9px] text-slate-400 font-medium uppercase tracking-tight">Spent Today</p>
-                    <p className="text-[11px] font-semibold text-slate-800 mt-0.5">
+                    <p className="text-xs font-bold text-slate-800 mt-0.5">
                       Rp {todaySpent.toLocaleString('id-ID')}
                     </p>
                   </div>
@@ -295,14 +326,14 @@ export default function BudgetSection({ transactions }: { transactions: Transact
                       {cumulativeBonus >= 0 ? <Sparkles size={11} className="text-emerald-600" /> : <AlertCircle size={11} className="text-rose-600" />}
                       {cumulativeBonus >= 0 ? 'Accumulated Savings' : 'Outstanding Deficit'}
                     </p>
-                    <p className={`text-[11px] font-semibold mt-0.5 ${cumulativeBonus >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    <p className={`text-xs font-bold mt-0.5 ${cumulativeBonus >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                       {cumulativeBonus >= 0 ? '+' : ''}Rp {Math.round(cumulativeBonus).toLocaleString('id-ID')}
                     </p>
                   </div>
                 </div>
 
                 {/* Progress Bar */}
-                <div className="w-full h-1 bg-slate-200/70 rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-slate-200/70 rounded-full overflow-hidden">
                   <div 
                     className={`h-full transition-all duration-300 ${monthlyPercent >= 100 ? 'bg-rose-500' : (monthlyPercent >= 75 ? 'bg-amber-500' : 'bg-indigo-600')}`} 
                     style={{ width: `${monthlyPercent}%` }}
