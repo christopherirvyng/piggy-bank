@@ -2,199 +2,208 @@ import { GoogleGenAI } from '@google/genai';
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Ambil variabel environment (fleksibel membaca dengan/tanpa prefix NEXT_PUBLIC_)
 const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+// Lock Categories to Strict Enums Only
+function normalizeCategory(catRaw: string): string {
+  const cat = (catRaw || '').toLowerCase();
+  
+  if (cat.includes('food') || cat.includes('drink') || cat.includes('makan') || cat.includes('jajan') || cat.includes('kuliner') || cat.includes('dining') || cat.includes('beverage')) {
+    return 'Food & Beverage';
+  }
+  if (cat.includes('trans') || cat.includes('gocar') || cat.includes('gojek') || cat.includes('ride') || cat.includes('parkir') || cat.includes('bensin')) {
+    return 'Transportation';
+  }
+  if (cat.includes('util') || cat.includes('pln') || cat.includes('listrik') || cat.includes('water') || cat.includes('air')) {
+    return 'Utilities';
+  }
+  if (cat.includes('enter') || cat.includes('game') || cat.includes('movie') || cat.includes('bioskop') || cat.includes('park')) {
+    return 'Entertainment';
+  }
+  if (cat.includes('shop') || cat.includes('belanja') || cat.includes('mall')) {
+    return 'Shopping';
+  }
+
+  return 'Other';
+}
+
+function sanitizeAccount(accRaw: string): 'cash' | 'bank' | 'investment' {
+  const acc = (accRaw || '').toLowerCase();
+  if (acc.includes('cash') || acc.includes('tunai') || acc.includes('dompet')) return 'cash';
+  if (acc.includes('saham') || acc.includes('kripto') || acc.includes('investasi') || acc.includes('reksadana')) return 'investment';
+  return 'bank';
+}
+
+function extractRealAmount(promptText: string, aiAmount: number): number {
+  const lower = promptText.toLowerCase();
+  const cleanText = lower
+    .replace(/\b\d{1,2}\s*(okt|oktober|jan|januari|feb|februari|mar|maret|apr|april|mei|jun|juni|jul|juli|agustus|agus|sep|september|nov|november|des|desember)\b/g, '')
+    .replace(/\b\d{1,2}[\/\-]\d{1,2}([\/\-]\d{2,4})?\b/g, '');
+
+  const rbMatch = cleanText.match(/(\d+[\.,]?\d*)\s*(rb|k)/);
+  if (rbMatch) return Math.round(parseFloat(rbMatch[1].replace(',', '.')) * 1000);
+
+  const jtMatch = cleanText.match(/(\d+[\.,]?\d*)\s*jt/);
+  if (jtMatch) return Math.round(parseFloat(jtMatch[1].replace(',', '.')) * 1000000);
+
+  const rawNumbers = cleanText.match(/\d+(?:[\.,]\d+)*/g);
+  if (rawNumbers) {
+    const nums = rawNumbers.map(n => parseInt(n.replace(/[\.,]/g, ''), 10)).filter(n => !isNaN(n) && n > 0);
+    if (nums.length > 0) {
+      const maxNum = Math.max(...nums);
+      if (maxNum >= 1000) return maxNum;
+      return nums.find(n => n >= 1000) || maxNum;
+    }
+  }
+
+  if (aiAmount >= 1000) return aiAmount;
+  return aiAmount;
+}
+
+async function generateWithTimeout(ai: GoogleGenAI, modelName: string, payload: any, systemInstruction: string, timeoutMs = 10000) {
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`Timeout ${timeoutMs / 1000}s`)), timeoutMs)
+  );
+
+  const apiPromise = ai.models.generateContent({
+    model: modelName,
+    contents: payload,
+    config: {
+      systemInstruction,
+      responseMimeType: 'application/json',
+    },
+  });
+
+  return Promise.race([apiPromise, timeoutPromise]);
+}
 
 export async function POST(req: Request) {
   try {
-    // 1. Ambil Authorization Token dari Header Request
     const authHeader = req.headers.get('Authorization');
     const token = authHeader?.split(' ')[1];
 
-    if (!token) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized: Harap login terlebih dahulu' },
-        { status: 401 }
-      );
-    }
+    if (!token) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
 
-    // 2. Verifikasi Token Supabase untuk mendapatkan data User
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
+    if (authError || !user) return NextResponse.json({ success: false, error: 'Session expired' }, { status: 401 });
 
-    if (authError || !user) {
-      return NextResponse.json(
-        { success: false, error: 'Session tidak valid atau kadaluarsa' },
-        { status: 401 }
-      );
-    }
+    const body = await req.json();
+    const userPrompt = body.prompt || body.message || '';
+    const imageBase64 = body.imageBase64 || null;
 
-    // 3. Validasi API Key Gemini
-    if (!apiKey) {
-      return NextResponse.json(
-        { success: false, error: 'API Key Gemini belum ada di Environment Variables' },
-        { status: 400 }
-      );
-    }
-
-    const { prompt, imageBase64 } = await req.json();
+    const todayStr = new Date().toISOString().split('T')[0];
 
     const systemInstruction = `
-Kamu adalah parser transaksi keuangan cerdas. Tugasmu mengekstrak data dari teks atau foto struk.
-Kembalikan HANYA format JSON valid tanpa tanda backtick markdown (\`\`\`json).
+You are a smart financial transaction parser.
+Your job is to strictly parse user messages or receipts into JSON.
 
-Aturan Khusus Penyesuaian Saldo / Reset:
-- "isReset": true -> Jika user minta set/adjust/reset saldo ke angka tertentu (contoh: "set cash 500rb", "adjust saldo bank jadi 1jt", "reset cash ke 0").
-- "excludeFromStats": true -> Jika transaksi bersifat penyesuaian/transfer/pindah uang yang TIDAK boleh mempengaruhi grafik Pemasukan & Pengeluaran real.
+ALLOWED CATEGORIES ONLY:
+- "Food & Beverage"
+- "Transportation"
+- "Utilities"
+- "Entertainment"
+- "Shopping"
+- "Other"
 
-Aturan Deteksi Account (Dompet/Sumber Uang):
-- "cash" -> Jika ada kata seperti: cash, tunai, uang fisik, dompet.
-- "investment" -> Jika ada kata seperti: saham, kripto, reksadana, investasi, bibit, ajaib, crypto.
-- "bank" -> Jika ada kata seperti: bank, rekening, bca, mandiri, gopay, ovo, dana, qris, debit, atau jika tidak disebutkan.
+STRICT RULES:
+- Do NOT invent new categories! Map everything strictly to the 6 allowed categories above.
+- Never take date numbers (like "1" from "1 okt") as transaction amounts!
+- "account" MUST be one of: "bank", "cash", "investment".
 
-Format JSON Wajib untuk Transaksi Biasa:
+Mandatory JSON Format:
 {
   "isReset": false,
-  "excludeFromStats": false,
-  "title": "Nama barang/transaksi",
-  "amount": 20000,
+  "title": "KFC",
+  "amount": 18250,
   "type": "expense",
   "category": "Food & Beverage",
   "account": "bank",
-  "date": "2026-10-04"
-}
-
-Format JSON Wajib untuk Manual Adjust / Set Saldo:
-{
-  "isReset": true,
-  "excludeFromStats": true,
-  "account": "cash",
-  "targetAmount": 350000
+  "date": "${todayStr}"
 }
     `;
 
-    const ai = new GoogleGenAI({ apiKey });
-
-    const contents: any[] = [];
-    if (prompt) contents.push(prompt);
-
-    if (imageBase64) {
-      contents.push({
-        inlineData: {
-          mimeType: 'image/jpeg',
-          data: imageBase64.split(',')[1] || imageBase64,
-        },
-      });
-    }
-
-    const payloadContents = contents.length > 0 ? contents : ['Catat transaksi 0 rupiah'];
-
     let response: any = null;
 
-    try {
-      response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: payloadContents,
-        config: { systemInstruction },
-      });
-    } catch (primaryError: any) {
-      console.warn('⚠️ Gemini 2.5 Flash sibuk, coba beralih ke Gemini 3.5 Flash Lite...');
-      try {
-        response = await ai.models.generateContent({
-          model: 'gemini-3.5-flash-lite',
-          contents: payloadContents,
-          config: { systemInstruction },
+    if (apiKey) {
+      const ai = new GoogleGenAI({ apiKey });
+      const contents: any[] = [];
+      if (userPrompt) contents.push(userPrompt);
+      if (imageBase64) {
+        contents.push({
+          inlineData: {
+            mimeType: 'image/jpeg',
+            data: imageBase64.split(',')[1] || imageBase64,
+          },
         });
-      } catch (fallbackError: any) {
-        console.warn('⚠️ AI Service sibuk, beralih ke local parser...');
-        response = null;
+      }
+      const payloadContents = contents.length > 0 ? contents : ['0'];
+
+      try {
+        response = await generateWithTimeout(ai, 'gemini-3.1-flash-lite', payloadContents, systemInstruction, 10000);
+      } catch (err1) {
+        try {
+          response = await generateWithTimeout(ai, 'gemini-3.5-flash-lite', payloadContents, systemInstruction, 10000);
+        } catch (err2) {
+          try {
+            response = await generateWithTimeout(ai, 'gemini-3.5-flash', payloadContents, systemInstruction, 10000);
+          } catch (err3) {
+            response = null;
+          }
+        }
       }
     }
 
     let rawText = response?.text || response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
     rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
 
-    let parsedData;
+    let parsedData: any;
     try {
-      if (!rawText) throw new Error('Respon AI kosong');
+      if (!rawText) throw new Error('AI Response empty');
       parsedData = JSON.parse(rawText);
     } catch (e) {
-      const lowerPrompt = (prompt || '').toLowerCase();
-      const isResetPrompt = lowerPrompt.includes('reset') || lowerPrompt.includes('nolkan') || lowerPrompt.includes('set saldo') || lowerPrompt.includes('adjust');
-      const isExcludePrompt = lowerPrompt.includes('ga ngaruh') || lowerPrompt.includes('gak ngaruh') || lowerPrompt.includes('pindah') || lowerPrompt.includes('transfer');
-
-      if (isResetPrompt) {
-        let detectedAccount: 'cash' | 'bank' | 'investment' = 'bank';
-        if (lowerPrompt.includes('cash') || lowerPrompt.includes('tunai')) detectedAccount = 'cash';
-        else if (lowerPrompt.includes('saham') || lowerPrompt.includes('investasi')) detectedAccount = 'investment';
-
-        const matches = lowerPrompt.match(/\d+/g);
-        let targetAmount = matches ? parseInt(matches.join(''), 10) : 0;
-        if (lowerPrompt.includes('rb') && targetAmount < 1000) targetAmount *= 1000;
-        if (lowerPrompt.includes('jt') && targetAmount < 1000) targetAmount *= 1000000;
-
-        parsedData = {
-          isReset: true,
-          excludeFromStats: true,
-          account: detectedAccount,
-          targetAmount: targetAmount,
-        };
-      } else {
-        const matches = (prompt || '').match(/\d+/g);
-        let amount = matches ? parseInt(matches.join(''), 10) : 20000;
-        if (lowerPrompt.includes('rb') && amount < 1000) amount *= 1000;
-        if (lowerPrompt.includes('jt') && amount < 1000) amount *= 1000000;
-
-        const isIncome = lowerPrompt.includes('dapet') || lowerPrompt.includes('gaji') || lowerPrompt.includes('penghasilan');
-
-        let detectedAccount: 'cash' | 'bank' | 'investment' = 'bank';
-        if (lowerPrompt.includes('cash') || lowerPrompt.includes('tunai')) detectedAccount = 'cash';
-        else if (lowerPrompt.includes('saham') || lowerPrompt.includes('investasi')) detectedAccount = 'investment';
-
-        parsedData = {
-          isReset: false,
-          excludeFromStats: isExcludePrompt,
-          title: prompt || 'Transaksi',
-          amount: amount,
-          type: isIncome ? 'income' : 'expense',
-          category: isExcludePrompt ? 'Adjustment/Transfer' : (isIncome ? 'Income' : 'Food & Beverage'),
-          account: detectedAccount,
-          date: new Date().toISOString().split('T')[0],
-        };
-      }
+      const lowerPrompt = userPrompt.toLowerCase();
+      const isResetPrompt = lowerPrompt.includes('reset') || lowerPrompt.includes('set') || lowerPrompt.includes('adjust');
+      
+      parsedData = {
+        isReset: isResetPrompt,
+        title: userPrompt.replace(/\d+/g, '').trim() || 'Expense',
+        amount: 0,
+        type: 'expense',
+        category: 'Food & Beverage',
+        account: 'bank',
+        date: todayStr,
+      };
     }
 
-    // 4. Simpan Otomatis Hasil Ekstraksi Transaksi ke Supabase Beserta user_id
+    parsedData.amount = extractRealAmount(userPrompt, Number(parsedData.amount) || 0);
+    parsedData.account = sanitizeAccount(parsedData.account);
+    parsedData.category = normalizeCategory(parsedData.category);
+
     if (!parsedData.isReset) {
-      const { error: dbError } = await supabase
+      const { error: dbError } = await supabaseAdmin
         .from('transactions')
         .insert([
           {
-            title: parsedData.title,
-            amount: parsedData.amount,
-            type: parsedData.type,
+            title: parsedData.title || 'Expense',
+            amount: Number(parsedData.amount) || 0,
+            type: parsedData.type || 'expense',
             category: parsedData.category,
             account: parsedData.account,
-            date: parsedData.date,
-            exclude_from_stats: parsedData.excludeFromStats,
-            user_id: user.id, // Menyimpan ID user yang sedang login
+            date: parsedData.date || todayStr,
+            user_id: user.id,
           },
         ]);
 
-      if (dbError) {
-        console.error('❌ Error simpan ke Supabase:', dbError);
-      }
+      if (dbError) console.error('❌ Supabase Insert Error:', dbError);
     }
 
     return NextResponse.json({ success: true, data: parsedData });
   } catch (error: any) {
-    console.error('❌ Error Detail Backend:', error);
-    return NextResponse.json(
-      { success: false, error: error.message || 'Internal Server Error' },
-      { status: 500 }
-    );
+    console.error('❌ Root API Error:', error);
+    return NextResponse.json({ success: false, error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }

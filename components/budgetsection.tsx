@@ -1,0 +1,318 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
+import { Plus, PiggyBank, Sparkles, AlertCircle, Calendar, Edit2, Trash2, Check, X } from 'lucide-react';
+
+interface Budget {
+  id: string;
+  category: string;
+  monthly_limit: number;
+}
+
+interface Transaction {
+  amount: number;
+  category: string;
+  type: string;
+  date: string;
+}
+
+const isCategoryMatch = (transCat: string, budgetCat: string) => {
+  const t = (transCat || '').toLowerCase();
+  const b = (budgetCat || '').toLowerCase();
+
+  if (t === b) return true;
+
+  const isFoodBudget = b.includes('makan') || b.includes('jajan') || b.includes('food') || b.includes('drink') || b.includes('beverage');
+  const isFoodTrans = t.includes('makan') || t.includes('jajan') || t.includes('food') || t.includes('drink') || t.includes('beverage');
+
+  return isFoodBudget && isFoodTrans;
+};
+
+export default function BudgetSection({ transactions }: { transactions: Transaction[] }) {
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [category, setCategory] = useState('Food & Beverage');
+  const [displayMonthlyInput, setDisplayMonthlyInput] = useState('');
+  const [rawMonthlyInput, setRawMonthlyInput] = useState<number>(0);
+  const [loading, setLoading] = useState(false);
+
+  // State Edit Budget
+  const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
+  const [editLimitInput, setEditLimitInput] = useState('');
+  const [rawEditLimit, setRawEditLimit] = useState<number>(0);
+
+  useEffect(() => {
+    fetchBudgets();
+  }, []);
+
+  const fetchBudgets = async () => {
+    const { data } = await supabase.from('budgets').select('*');
+    if (data) setBudgets(data);
+  };
+
+  const formatNumber = (val: string) => {
+    const rawValue = val.replace(/\D/g, '');
+    if (!rawValue) return { formatted: '', numeric: 0 };
+
+    const numericValue = parseInt(rawValue, 10);
+    const formattedValue = new Intl.NumberFormat('id-ID').format(numericValue);
+
+    return { formatted: formattedValue, numeric: numericValue };
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { formatted, numeric } = formatNumber(e.target.value);
+    setDisplayMonthlyInput(formatted);
+    setRawMonthlyInput(numeric);
+  };
+
+  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { formatted, numeric } = formatNumber(e.target.value);
+    setEditLimitInput(formatted);
+    setRawEditLimit(numeric);
+  };
+
+  const handleAddOrUpdateBudget = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!category || rawMonthlyInput <= 0) return;
+    setLoading(true);
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
+    const existing = budgets.find(b => b.category.toLowerCase() === category.toLowerCase());
+
+    if (existing) {
+      await supabase
+        .from('budgets')
+        .update({ monthly_limit: rawMonthlyInput })
+        .eq('id', existing.id);
+    } else {
+      await supabase.from('budgets').insert([
+        { 
+          category, 
+          monthly_limit: rawMonthlyInput, 
+          user_id: session.user.id 
+        }
+      ]);
+    }
+
+    setDisplayMonthlyInput('');
+    setRawMonthlyInput(0);
+    fetchBudgets();
+    setLoading(false);
+  };
+
+  const handleSaveEdit = async (id: string) => {
+    if (rawEditLimit <= 0) return;
+    const { error } = await supabase
+      .from('budgets')
+      .update({ monthly_limit: rawEditLimit })
+      .eq('id', id);
+
+    if (!error) {
+      setEditingBudget(null);
+      fetchBudgets();
+    }
+  };
+
+  const handleDeleteBudget = async (id: string) => {
+    const { error } = await supabase.from('budgets').delete().eq('id', id);
+    if (!error) fetchBudgets();
+  };
+
+  const calculateRollover = (b: Budget) => {
+    const now = new Date();
+    const currentDay = now.getDate();
+    const daysInCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+    const dailyAllowance = b.monthly_limit / daysInCurrentMonth;
+
+    const todaySpent = transactions
+      .filter((t) => {
+        const d = new Date(t.date);
+        return (
+          t.type === 'expense' &&
+          isCategoryMatch(t.category, b.category) &&
+          d.getDate() === now.getDate() &&
+          d.getMonth() === now.getMonth() &&
+          d.getFullYear() === now.getFullYear()
+        );
+      })
+      .reduce((acc, curr) => acc + Number(curr.amount), 0);
+
+    const monthlySpent = transactions
+      .filter((t) => {
+        const d = new Date(t.date);
+        return (
+          t.type === 'expense' &&
+          isCategoryMatch(t.category, b.category) &&
+          d.getMonth() === now.getMonth() &&
+          d.getFullYear() === now.getFullYear()
+        );
+      })
+      .reduce((acc, curr) => acc + Number(curr.amount), 0);
+
+    const accruedBudgetTillToday = dailyAllowance * currentDay;
+    const cumulativeBonus = accruedBudgetTillToday - monthlySpent;
+
+    return {
+      daysInCurrentMonth,
+      dailyAllowance,
+      todaySpent,
+      monthlySpent,
+      cumulativeBonus,
+    };
+  };
+
+  return (
+    <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3 font-sans">
+      <div className="flex justify-between items-center">
+        <h3 className="font-semibold text-slate-900 text-xs flex items-center gap-1.5">
+          <PiggyBank size={15} className="text-indigo-600" /> Monthly Budget & Rollover
+        </h3>
+      </div>
+
+      {/* Form Input Budget */}
+      <form onSubmit={handleAddOrUpdateBudget} className="flex gap-1.5 text-xs">
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="flex-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-[11px]"
+        >
+          <option value="Food & Beverage">Food & Beverage</option>
+          <option value="Transportation">Transportation</option>
+          <option value="Utilities">Utilities</option>
+          <option value="Entertainment">Entertainment</option>
+          <option value="Shopping">Shopping</option>
+          <option value="Other">Other</option>
+        </select>
+        
+        <div className="relative flex-1">
+          <span className="absolute left-2.5 top-2 text-slate-400 font-medium text-[11px]">Rp</span>
+          <input
+            type="text"
+            placeholder="1.500.000"
+            value={displayMonthlyInput}
+            onChange={handleInputChange}
+            className="w-full pl-7 pr-2 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-[11px]"
+            required
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl font-medium flex items-center gap-1 hover:bg-indigo-700 disabled:opacity-50 transition text-[11px] shadow-sm"
+        >
+          <Plus size={13} /> Set
+        </button>
+      </form>
+
+      {/* List Budget Cards */}
+      <div className="space-y-2 pt-0.5">
+        {budgets.length === 0 ? (
+          <p className="text-[11px] font-normal text-slate-400 text-center py-2">No monthly budget set yet.</p>
+        ) : (
+          budgets.map((b) => {
+            const { daysInCurrentMonth, dailyAllowance, todaySpent, monthlySpent, cumulativeBonus } = calculateRollover(b);
+            const monthlyPercent = Math.min(Math.round((monthlySpent / b.monthly_limit) * 100), 100);
+            const isEditing = editingBudget?.id === b.id;
+
+            return (
+              <div key={b.id} className="p-3 border border-slate-100 rounded-xl bg-slate-50/50 space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-800 text-xs">{b.category}</span>
+                      
+                      <button
+                        onClick={() => {
+                          setEditingBudget(b);
+                          const { formatted, numeric } = formatNumber(String(b.monthly_limit));
+                          setEditLimitInput(formatted);
+                          setRawEditLimit(numeric);
+                        }}
+                        className="p-0.5 text-slate-400 hover:text-indigo-600 transition"
+                        title="Edit Budget"
+                      >
+                        <Edit2 size={12} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteBudget(b.id)}
+                        className="p-0.5 text-slate-400 hover:text-rose-600 transition"
+                        title="Delete Budget"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+
+                    <p className="text-[10px] font-normal text-slate-400 flex items-center gap-1 mt-0.5">
+                      <Calendar size={11} /> Daily Allowance ({daysInCurrentMonth} Days): <strong className="text-slate-700 font-semibold">Rp {Math.round(dailyAllowance).toLocaleString('id-ID')}/day</strong>
+                    </p>
+                  </div>
+
+                  {/* Form In-Place Edit Budget Limit */}
+                  <div className="text-right">
+                    {isEditing ? (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] font-medium text-slate-400">Rp</span>
+                        <input
+                          type="text"
+                          value={editLimitInput}
+                          onChange={handleEditInputChange}
+                          className="w-20 px-1.5 py-0.5 bg-white border border-slate-300 rounded-md text-[11px] font-medium text-slate-800"
+                        />
+                        <button onClick={() => handleSaveEdit(b.id)} className="p-0.5 text-emerald-600 hover:bg-emerald-50 rounded">
+                          <Check size={13} />
+                        </button>
+                        <button onClick={() => setEditingBudget(null)} className="p-0.5 text-slate-400 hover:bg-slate-100 rounded">
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-[11px] font-semibold text-slate-800">
+                          Rp {monthlySpent.toLocaleString('id-ID')} / <span className="text-slate-400 font-normal">Rp {Number(b.monthly_limit).toLocaleString('id-ID')}</span>
+                        </p>
+                        <p className="text-[10px] font-normal text-slate-400">Monthly Usage ({monthlyPercent}%)</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Status Box (Today Spent & Accumulated Savings) */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                    <p className="text-[9px] text-slate-400 font-medium uppercase tracking-tight">Spent Today</p>
+                    <p className="text-[11px] font-semibold text-slate-800 mt-0.5">
+                      Rp {todaySpent.toLocaleString('id-ID')}
+                    </p>
+                  </div>
+
+                  <div className={`p-2 rounded-lg border ${cumulativeBonus >= 0 ? 'bg-emerald-50/60 border-emerald-100/80' : 'bg-rose-50/60 border-rose-100/80'}`}>
+                    <p className="text-[9px] font-medium uppercase tracking-tight flex items-center gap-1 text-slate-500">
+                      {cumulativeBonus >= 0 ? <Sparkles size={11} className="text-emerald-600" /> : <AlertCircle size={11} className="text-rose-600" />}
+                      {cumulativeBonus >= 0 ? 'Accumulated Savings' : 'Outstanding Deficit'}
+                    </p>
+                    <p className={`text-[11px] font-semibold mt-0.5 ${cumulativeBonus >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {cumulativeBonus >= 0 ? '+' : ''}Rp {Math.round(cumulativeBonus).toLocaleString('id-ID')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="w-full h-1 bg-slate-200/70 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full transition-all duration-300 ${monthlyPercent >= 100 ? 'bg-rose-500' : (monthlyPercent >= 75 ? 'bg-amber-500' : 'bg-indigo-600')}`} 
+                    style={{ width: `${monthlyPercent}%` }}
+                  ></div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
