@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Plus, PiggyBank, Sparkles, AlertCircle, Calendar, Edit2, Trash2, Check, X } from 'lucide-react';
+import { Plus, PiggyBank, Sparkles, AlertCircle, Edit2, Trash2, Check, X } from 'lucide-react';
 
 interface Budget {
   id: string;
@@ -194,155 +194,157 @@ export default function BudgetSection({ transactions = [] }: { transactions?: Tr
   };
 
   return (
-    <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3 font-sans select-none cursor-default">
-      <div className="flex justify-between items-center pb-1 border-b border-slate-100">
-        <h3 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-          <PiggyBank size={15} className="text-indigo-600 shrink-0" /> Monthly Budget & Rollover
-        </h3>
-        <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
-          {budgets.length} Categories
-        </span>
-      </div>
-
-      {/* Form Input Budget */}
-      <form onSubmit={handleAddOrUpdateBudget} className="flex gap-1.5 text-xs">
-        <select
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          className="flex-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs cursor-pointer"
-        >
-          <option value="Food & Beverage">Food & Beverage</option>
-          <option value="Transportation">Transportation</option>
-          <option value="Utilities">Utilities</option>
-          <option value="Entertainment">Entertainment</option>
-          <option value="Shopping">Shopping</option>
-          <option value="Other">Other</option>
-        </select>
-        
-        <div className="relative flex-1">
-          <span className="absolute left-2.5 top-1.5 text-slate-400 font-medium text-xs">Rp</span>
-          <input
-            type="text"
-            placeholder="1.500.000"
-            value={displayMonthlyInput}
-            onChange={handleInputChange}
-            className="w-full pl-7 pr-2 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs cursor-text"
-            required
-          />
+    <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-2 h-full flex flex-col justify-between font-[-apple-system,BlinkMacSystemFont,'SF_Pro_Text','SF_Pro_Display',sans-serif] select-none cursor-default antialiased overflow-hidden">
+      <div>
+        {/* COMPACT HEADER */}
+        <div className="flex justify-between items-center pb-1 border-b border-slate-100 mb-2">
+          <h3 className="font-bold text-slate-900 text-xs flex items-center gap-1.5 tracking-tight">
+            <PiggyBank size={14} className="text-indigo-600 shrink-0" /> Monthly Budget
+          </h3>
         </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl font-semibold flex items-center gap-1 hover:bg-indigo-700 disabled:opacity-50 transition text-xs shadow-sm cursor-pointer"
-        >
-          <Plus size={13} /> Add
-        </button>
-      </form>
+        {/* COMPACT FORM INPUT */}
+        <form onSubmit={handleAddOrUpdateBudget} className="flex gap-1.5 text-xs mb-2">
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="flex-1 px-2 py-1 bg-slate-50 border border-slate-200/80 rounded-lg text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs cursor-pointer"
+          >
+            <option value="Food & Beverage">Food & Beverage</option>
+            <option value="Transportation">Transportation</option>
+            <option value="Utilities">Utilities</option>
+            <option value="Entertainment">Entertainment</option>
+            <option value="Shopping">Shopping</option>
+            <option value="Other">Other</option>
+          </select>
+          
+          <div className="relative flex-1">
+            <span className="absolute left-2 top-1 text-slate-400 font-medium text-xs">Rp</span>
+            <input
+              type="text"
+              placeholder="1.500.000"
+              value={displayMonthlyInput}
+              onChange={handleInputChange}
+              className="w-full pl-6 pr-2 py-1 bg-slate-50 border border-slate-200/80 rounded-lg text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs cursor-text"
+              required
+            />
+          </div>
 
-      {/* List Budget Cards */}
-      <div className="space-y-2 pt-0.5">
-        {budgets.length === 0 ? (
-          <p className="text-xs text-slate-400 text-center py-3">No monthly budget set yet.</p>
-        ) : (
-          budgets.map((b) => {
-            const { daysInCurrentMonth, dailyAllowance, todaySpent, monthlySpent, cumulativeBonus } = calculateRollover(b);
-            const monthlyPercent = b.monthly_limit > 0 ? Math.min(Math.round((monthlySpent / b.monthly_limit) * 100), 100) : 0;
-            const isEditing = editingBudget?.id === b.id;
+          <button
+            type="submit"
+            disabled={loading}
+            className="px-2.5 py-1 bg-indigo-600 text-white rounded-lg font-semibold flex items-center gap-1 hover:bg-indigo-700 disabled:opacity-50 transition text-xs shadow-xs cursor-pointer shrink-0"
+          >
+            <Plus size={12} /> Add
+          </button>
+        </form>
 
-            return (
-              <div key={b.id} className="p-3 border border-slate-100 rounded-xl bg-slate-50/60 space-y-2 text-xs">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-slate-800 text-xs">{b.category}</span>
-                      
-                      <button
-                        onClick={() => {
-                          setEditingBudget(b);
-                          const { formatted, numeric } = formatNumber(String(b.monthly_limit));
-                          setEditLimitInput(formatted);
-                          setRawEditLimit(numeric);
-                        }}
-                        className="p-0.5 text-slate-400 hover:text-indigo-600 transition cursor-pointer"
-                        title="Edit Budget"
-                      >
-                        <Edit2 size={12} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteBudget(b.id)}
-                        className="p-0.5 text-slate-400 hover:text-rose-600 transition cursor-pointer"
-                        title="Delete Budget"
-                      >
-                        <Trash2 size={12} />
-                      </button>
+        {/* BUDGET CARDS LIST */}
+        <div className="space-y-1.5 overflow-y-auto custom-scrollbar max-h-[125px] pr-0.5">
+          {budgets.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-2 font-normal">No monthly budget set yet.</p>
+          ) : (
+            budgets.map((b) => {
+              const { daysInCurrentMonth, dailyAllowance, todaySpent, monthlySpent, cumulativeBonus } = calculateRollover(b);
+              const monthlyPercent = b.monthly_limit > 0 ? Math.min(Math.round((monthlySpent / b.monthly_limit) * 100), 100) : 0;
+              const isEditing = editingBudget?.id === b.id;
+
+              return (
+                <div key={b.id} className="p-2.5 border border-slate-200/60 rounded-xl bg-slate-50/50 space-y-1.5 text-xs">
+                  {/* HEADER ROW: TITLE + ICONS & SPENT / LIMIT */}
+                  <div className="flex justify-between items-center">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-1 text-slate-800">
+                        <span className="font-bold text-xs tracking-tight">{b.category}</span>
+                        
+                        <div className="flex items-center gap-0.5 ml-0.5">
+                          <button
+                            onClick={() => {
+                              setEditingBudget(b);
+                              const { formatted, numeric } = formatNumber(String(b.monthly_limit));
+                              setEditLimitInput(formatted);
+                              setRawEditLimit(numeric);
+                            }}
+                            className="p-0.5 text-slate-400 hover:text-indigo-600 transition cursor-pointer rounded hover:bg-slate-200/60"
+                            title="Edit Budget"
+                          >
+                            <Edit2 size={11} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteBudget(b.id)}
+                            className="p-0.5 text-slate-400 hover:text-rose-600 transition cursor-pointer rounded hover:bg-slate-200/60"
+                            title="Delete Budget"
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="text-[10px] text-slate-400 font-normal">
+                        Daily ({daysInCurrentMonth}d): <strong className="text-slate-700 font-semibold">Rp {Math.round(dailyAllowance).toLocaleString('id-ID')}</strong>
+                      </p>
                     </div>
 
-                    <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
-                      <Calendar size={11} /> Daily Allowance ({daysInCurrentMonth} Days): <strong className="text-slate-700 font-semibold">Rp {Math.round(dailyAllowance).toLocaleString('id-ID')}</strong>
-                    </p>
+                    <div className="text-right">
+                      {isEditing ? (
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-slate-400">Rp</span>
+                          <input
+                            type="text"
+                            value={editLimitInput}
+                            onChange={handleEditInputChange}
+                            className="w-16 px-1 py-0.5 bg-white border border-slate-300 rounded text-xs font-semibold text-slate-800 cursor-text"
+                          />
+                          <button onClick={() => handleSaveEdit(b.id)} className="p-0.5 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer">
+                            <Check size={12} />
+                          </button>
+                          <button onClick={() => setEditingBudget(null)} className="p-0.5 text-slate-400 hover:bg-slate-100 rounded cursor-pointer">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-xs font-bold text-slate-900 tracking-tight">
+                            Rp {monthlySpent.toLocaleString('id-ID')} <span className="text-slate-400 font-normal">/ Rp {Number(b.monthly_limit).toLocaleString('id-ID')}</span>
+                          </p>
+                          <p className="text-[9px] text-slate-400 font-medium">Usage ({monthlyPercent}%)</p>
+                        </>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Form Edit Limit */}
-                  <div className="text-right">
-                    {isEditing ? (
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs text-slate-400">Rp</span>
-                        <input
-                          type="text"
-                          value={editLimitInput}
-                          onChange={handleEditInputChange}
-                          className="w-20 px-1.5 py-0.5 bg-white border border-slate-300 rounded-md text-xs font-semibold text-slate-800 cursor-text"
-                        />
-                        <button onClick={() => handleSaveEdit(b.id)} className="p-0.5 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer">
-                          <Check size={13} />
-                        </button>
-                        <button onClick={() => setEditingBudget(null)} className="p-0.5 text-slate-400 hover:bg-slate-100 rounded cursor-pointer">
-                          <X size={13} />
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="text-xs font-bold text-slate-800">
-                          Rp {monthlySpent.toLocaleString('id-ID')} / <span className="text-slate-400 font-normal">Rp {Number(b.monthly_limit).toLocaleString('id-ID')}</span>
-                        </p>
-                        <p className="text-[10px] text-slate-400">Usage ({monthlyPercent}%)</p>
-                      </>
-                    )}
+                  {/* ULTRA-COMPACT STATUS BAR */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div className="px-2 py-1 bg-white rounded-md border border-slate-200/60 flex items-center justify-between">
+                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">TODAY</span>
+                      <span className="text-[11px] font-bold text-slate-900 tracking-tight">
+                        Rp {todaySpent.toLocaleString('id-ID')}
+                      </span>
+                    </div>
+
+                    <div className={`px-2 py-1 rounded-md border flex items-center justify-between ${cumulativeBonus >= 0 ? 'bg-emerald-50/80 border-emerald-100' : 'bg-rose-50/80 border-rose-100'}`}>
+                      <span className="text-[9px] font-bold uppercase tracking-wider flex items-center gap-0.5 text-slate-500">
+                        {cumulativeBonus >= 0 ? <Sparkles size={9} className="text-emerald-600" /> : <AlertCircle size={9} className="text-rose-600" />}
+                        {cumulativeBonus >= 0 ? 'SAVINGS' : 'DEFICIT'}
+                      </span>
+                      <span className={`text-[11px] font-bold tracking-tight ${cumulativeBonus >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {cumulativeBonus >= 0 ? '+' : ''}Rp {Math.round(cumulativeBonus).toLocaleString('id-ID')}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* PROGRESS BAR */}
+                  <div className="w-full h-1 bg-slate-200/80 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-300 ${monthlyPercent >= 100 ? 'bg-rose-500' : (monthlyPercent >= 75 ? 'bg-amber-500' : 'bg-indigo-600')}`} 
+                      style={{ width: `${monthlyPercent}%` }}
+                    ></div>
                   </div>
                 </div>
-
-                {/* Status Box */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="p-2 bg-white rounded-lg border border-slate-100">
-                    <p className="text-[9px] text-slate-400 font-medium uppercase tracking-tight">Spent Today</p>
-                    <p className="text-xs font-bold text-slate-800 mt-0.5">
-                      Rp {todaySpent.toLocaleString('id-ID')}
-                    </p>
-                  </div>
-
-                  <div className={`p-2 rounded-lg border ${cumulativeBonus >= 0 ? 'bg-emerald-50/60 border-emerald-100/80' : 'bg-rose-50/60 border-rose-100/80'}`}>
-                    <p className="text-[9px] font-medium uppercase tracking-tight flex items-center gap-1 text-slate-500">
-                      {cumulativeBonus >= 0 ? <Sparkles size={11} className="text-emerald-600" /> : <AlertCircle size={11} className="text-rose-600" />}
-                      {cumulativeBonus >= 0 ? 'Accumulated Savings' : 'Outstanding Deficit'}
-                    </p>
-                    <p className={`text-xs font-bold mt-0.5 ${cumulativeBonus >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                      {cumulativeBonus >= 0 ? '+' : ''}Rp {Math.round(cumulativeBonus).toLocaleString('id-ID')}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Progress Bar */}
-                <div className="w-full h-1.5 bg-slate-200/70 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full transition-all duration-300 ${monthlyPercent >= 100 ? 'bg-rose-500' : (monthlyPercent >= 75 ? 'bg-amber-500' : 'bg-indigo-600')}`} 
-                    style={{ width: `${monthlyPercent}%` }}
-                  ></div>
-                </div>
-              </div>
-            );
-          })
-        )}
+              );
+            })
+          )}
+        </div>
       </div>
     </div>
   );

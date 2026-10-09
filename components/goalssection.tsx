@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Target, Plus, Edit2, Trash2, X, Upload, Image as ImageIcon, Camera, TrendingUp } from 'lucide-react';
+import { Target, Plus, Edit2, Trash2, X, Camera } from 'lucide-react';
 
 export interface Goal {
   id: string;
@@ -22,9 +22,11 @@ interface Transaction {
 
 export default function GoalsSection({ 
   transactions = [], 
+  totalNetWorth = 0, // <-- Terima totalNetWorth dari parent (DesktopView)
   onRefresh 
 }: { 
   transactions?: Transaction[];
+  totalNetWorth?: number;
   onRefresh?: () => void;
 }) {
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -137,10 +139,7 @@ export default function GoalsSection({
     }
   };
 
-  const totalNetWorth = transactions.reduce((acc, curr) => {
-    return curr.type === 'income' ? acc + Number(curr.amount) : acc - Number(curr.amount);
-  }, 0);
-
+  // Gunakan totalNetWorth yang dikirim dari DesktopView
   const getGoalCurrentAmount = (g: Goal) => {
     return g.is_auto_track ? totalNetWorth : Number(g.current_amount || 0);
   };
