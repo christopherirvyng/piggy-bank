@@ -236,7 +236,8 @@ export default function Home() {
 
   const handleExportCSV = () => {
     if (transactions.length === 0) {
-      alert('Tidak ada transaksi untuk diexport.');
+      setToastMessage("Tidak ada transaksi untuk diexport.");
+      setTimeout(() => setToastMessage(null), 3000);
       return;
     }
 
@@ -266,6 +267,8 @@ export default function Home() {
     link.click();
     document.body.removeChild(link);
     showToast('Transactions exported to CSV!');
+    setToastMessage("Berhasil mendownload laporan CSV!");
+    setTimeout(() => setToastMessage(null), 3000);
   };
 
   const handleOpenAdjust = (account: 'cash' | 'bank' | 'investment') => {

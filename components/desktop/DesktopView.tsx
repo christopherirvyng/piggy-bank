@@ -32,6 +32,7 @@ import {
   X,
   Eye,
   EyeOff,
+  AlertCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
@@ -472,7 +473,11 @@ export default function DesktopView(props: DesktopViewProps) {
 
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 text-xs font-medium border border-slate-700 animate-in fade-in slide-in-from-top-3">
-          <CheckCircle2 size={16} className="text-emerald-400" />
+          {toastMessage.toLowerCase().includes('tidak') || toastMessage.toLowerCase().includes('gagal') ? (
+            <AlertCircle size={16} className="text-amber-400" />
+          ) : (
+            <CheckCircle2 size={16} className="text-emerald-400" />
+          )}
           <span>{toastMessage}</span>
         </div>
       )}

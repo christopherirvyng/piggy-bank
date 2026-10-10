@@ -5,26 +5,38 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { PiggyBank, Lock, User, Loader2, Sparkles } from 'lucide-react';
 
-export default function LoginPage() {
+export default function RegisterPage() {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const router = useRouter();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg(null);
+
+    if (password !== confirmPassword) {
+      setErrorMsg('Konfirmasi password tidak cocok');
+      setLoading(false);
+      return;
+    }
 
     const cleanInput = identifier.trim().toLowerCase();
     const formattedEmail = cleanInput.includes('@')
       ? cleanInput
       : `${cleanInput}@piggy.app`;
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signUp({
       email: formattedEmail,
       password,
+      options: {
+        data: {
+          username: cleanInput,
+        },
+      },
     });
 
     if (error) {
@@ -49,10 +61,10 @@ export default function LoginPage() {
             <PiggyBank size={26} />
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">
-            Piggy Bank
+            Daftar Akun Baru
           </h1>
           <p className="text-xs text-slate-500 font-medium flex items-center justify-center gap-1">
-            AI Financial Companion <Sparkles size={12} className="text-amber-500 fill-amber-500" />
+            Piggy Bank AI Companion <Sparkles size={12} className="text-amber-500 fill-amber-500" />
           </p>
         </div>
 
@@ -64,14 +76,14 @@ export default function LoginPage() {
         )}
 
         {/* Form Input */}
-        <form onSubmit={handleLogin} className="space-y-4 text-xs font-medium">
+        <form onSubmit={handleRegister} className="space-y-4 text-xs font-medium">
           <div className="flex flex-col gap-1.5">
             <label className="text-slate-600 font-semibold pl-1">Username / ID</label>
             <div className="relative flex items-center">
               <User size={15} className="absolute left-3.5 text-slate-400" />
               <input
                 type="text"
-                placeholder="Masukkan username bebas..."
+                placeholder="Pilih username bebas..."
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 className="w-full pl-10 pr-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-slate-800 transition font-medium"
@@ -86,9 +98,24 @@ export default function LoginPage() {
               <Lock size={15} className="absolute left-3.5 text-slate-400" />
               <input
                 type="password"
-                placeholder="••••••••"
+                placeholder="Minimal 6 karakter"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                className="w-full pl-10 pr-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-slate-800 transition font-medium"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-slate-600 font-semibold pl-1">Konfirmasi Password</label>
+            <div className="relative flex items-center">
+              <Lock size={15} className="absolute left-3.5 text-slate-400" />
+              <input
+                type="password"
+                placeholder="Ketik ulang password..."
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
                 className="w-full pl-10 pr-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-slate-800 transition font-medium"
                 required
               />
@@ -100,20 +127,20 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-xs shadow-lg shadow-indigo-600/30 transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70 mt-4"
           >
-            {loading ? <Loader2 className="animate-spin" size={16} /> : 'Masuk ke Akun'}
+            {loading ? <Loader2 className="animate-spin" size={16} /> : 'Buat Akun'}
           </button>
         </form>
 
         {/* Footer Link */}
         <div className="text-center pt-3 border-t border-slate-100">
           <p className="text-xs text-slate-500">
-            Belum punya akun?{' '}
+            Sudah punya akun?{' '}
             <button
               type="button"
-              onClick={() => router.push('/register')}
+              onClick={() => router.push('/login')}
               className="text-indigo-600 font-bold hover:underline cursor-pointer"
             >
-              Daftar
+              Masuk
             </button>
           </p>
         </div>
