@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Wallet,
   Banknote,
@@ -39,6 +39,9 @@ import BudgetSection from '@/components/budgetsection';
 import GoalsSection from '@/components/goalssection';
 import CalendarWidget from '@/components/calendarwidget';
 import InvestmentsSection from '@/components/investmentssection';
+
+import PiggyLottie from '@/components/PiggyLottie';
+
 
 interface DesktopViewProps {
   activeTab: string;
@@ -179,7 +182,7 @@ export default function DesktopView(props: DesktopViewProps) {
     if (assetFilter === 'income') return itemType === 'income';
     return true;
   });
-
+  
   const totalCategoryAmount = filteredChartData.reduce((acc, item) => acc + item.value, 0);
 
   // Handler Adjust Balance Submit
@@ -233,53 +236,151 @@ export default function DesktopView(props: DesktopViewProps) {
   };
 
   const handleCustomManualSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualTitle || !manualAmount) return;
+      e.preventDefault();
+      if (!manualTitle || !manualAmount) return;
 
-    await supabase.from('transactions').insert([
-      {
-        title: manualTitle,
-        amount: Number(manualAmount),
-        category: manualCategory,
-        account: manualAccount,
-        date: manualDate,
-        type: 'expense',
-      },
-    ]);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
 
-    setManualTitle('');
-    setManualAmount('');
-    setShowManualAdd(false);
-    fetchTransactions();
-  };
+      await supabase.from('transactions').insert([
+        {
+          title: manualTitle,
+          amount: Number(manualAmount),
+          category: manualCategory,
+          account: manualAccount,
+          date: manualDate,
+          type: 'expense',
+          user_id: session.user.id,
+        },
+      ]);
 
+      setManualTitle('');
+      setManualAmount('');
+      setShowManualAdd(false);
+      fetchTransactions();
+    };
+    
+    // State Advisor
+    // 1. Tambahkan state untuk Multi-Session di DesktopView.tsx
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
-  const [advisorMessages, setAdvisorMessages] = useState<Array<{ id: string; sender: 'user' | 'ai'; text: string }>>([
-    {
-      id: '1',
-      sender: 'ai',
-      text: `Halo ${username}! Aku Piggy, AI Financial Advisor kamu 🐷✨. Aku sudah menganalisis portofolio dan arus kasmu bulan ini. Ada yang mau ditanyakan atau minta rekomendasi keuangan?`,
-    },
-  ]);
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
+  const [sessions, setSessions] = useState<Array<{ id: string; title: string; created_at: string }>>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  const [advisorMessages, setAdvisorMessages] = useState<Array<{ id: string; sender: 'user' | 'ai'; text: string }>>([]);
   const [advisorInput, setAdvisorInput] = useState('');
   const [advisorLoading, setAdvisorLoading] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
+  // Fetch Daftar Sesi Percakapan
+  const fetchSessions = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch('/api/advisory', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSessions(data.sessions || []);
+      }
+    } catch (err) {
+      console.error('Failed to load sessions:', err);
+    }
+  };
+
+  // Fetch Pesan dalam Sesi Spesifik
+  const loadSessionMessages = async (sessionId: string) => {
+    try {
+      setAdvisorLoading(true);
+      setActiveSessionId(sessionId);
+      setIsHistoryDrawerOpen(false);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch(`/api/advisory?session_id=${sessionId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+
+      if (data.success && Array.isArray(data.messages) && data.messages.length > 0) {
+        setAdvisorMessages(data.messages);
+      } else {
+        setAdvisorMessages([
+          {
+            id: '1',
+            sender: 'ai',
+            text: `Halo ${username}! Mau lanjutin obrolan di topik ini? 🐷✨`,
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error('Failed to load session messages:', err);
+    } finally {
+      setAdvisorLoading(false);
+    }
+  };
+
+  // Start New Chat Session
+  const handleNewChat = () => {
+    setActiveSessionId(null);
+    setIsHistoryDrawerOpen(false);
+    setAdvisorMessages([
+      {
+        id: '1',
+        sender: 'ai',
+        text: `Halo ${username}! Aku Piggy, AI Financial Advisor kamu 🐷✨. Ada yang mau ditanyakan tentang keuanganmu hari ini?`,
+      },
+    ]);
+  };
+
+  // Initial Load
+  useEffect(() => {
+    if (isAdvisorOpen) {
+      fetchSessions();
+      if (!activeSessionId) {
+        handleNewChat();
+      }
+    }
+  }, [isAdvisorOpen]);
+
+  useEffect(() => {
+    if (isAdvisorOpen) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [advisorMessages, advisorLoading, isAdvisorOpen]);
+
+  // Send Message Handler
   const handleSendAdvisor = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!advisorInput.trim() || advisorLoading) return;
 
-    const userMsg = { id: Date.now().toString(), sender: 'user' as const, text: advisorInput };
+    const currentInput = advisorInput;
+    const userMsg = { id: Date.now().toString(), sender: 'user' as const, text: currentInput };
     const updatedMessages = [...advisorMessages, userMsg];
+
     setAdvisorMessages(updatedMessages);
     setAdvisorInput('');
     setAdvisorLoading(true);
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const historyToSend = updatedMessages.filter((m) => m.id !== '1');
+
       const res = await fetch('/api/advisory', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({
-          messages: updatedMessages,
+          sessionId: activeSessionId,
+          prompt: currentInput,
+          messages: historyToSend,
           financialContext: {
             username,
             totalNetWorth,
@@ -295,14 +396,70 @@ export default function DesktopView(props: DesktopViewProps) {
       });
 
       const data = await res.json();
-      if (data.reply) {
-        setAdvisorMessages((prev) => [...prev, { id: (Date.now() + 1).toString(), sender: 'ai', text: data.reply }]);
+      if (res.ok && data.reply) {
+        if (data.sessionId && !activeSessionId) {
+          setActiveSessionId(data.sessionId);
+          fetchSessions();
+        }
+        setAdvisorMessages((prev) => [
+          ...prev,
+          { id: (Date.now() + 1).toString(), sender: 'ai', text: data.reply },
+        ]);
       }
     } catch (err) {
       console.error(err);
     } finally {
       setAdvisorLoading(false);
     }
+  };
+
+  // State Modal Konfirmasi Hapus Chat Session
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+
+  // Delete Session Handler (membuka modal custom)
+  // Delete Session Handler (Mencegah event bubbling)
+  const handleDeleteSession = (sId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDeletingSessionId(sId);
+  };
+
+  // Eksekusi Hapus Session
+  const confirmDeleteSession = async () => {
+    if (!deletingSessionId) return;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch(`/api/advisory?session_id=${deletingSessionId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+
+      if (res.ok) {
+        if (activeSessionId === deletingSessionId) {
+          handleNewChat();
+        }
+        setDeletingSessionId(null);
+        await fetchSessions();
+      }
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    }
+  };
+
+  const lottieRef = useRef<any>(null);
+  const [isPiggyHovered, setIsPiggyHovered] = useState(false);
+
+  const handleMouseEnter = () => {
+    setIsPiggyHovered(true);
+    lottieRef.current?.play();
+  };
+
+  const handleMouseLeave = () => {
+    setIsPiggyHovered(false);
+    lottieRef.current?.stop(); // Panggil stop() supaya kereset ke frame 0
   };
 
   return (
@@ -380,14 +537,6 @@ export default function DesktopView(props: DesktopViewProps) {
               >
                 <TrendingUp size={14} /> Investment
               </button>
-              <button
-                onClick={() => setActiveTab('news')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition cursor-pointer ${
-                  activeTab === 'news' ? 'bg-white text-slate-900 font-semibold' : 'hover:text-white'
-                }`}
-              >
-                <Newspaper size={14} /> Market News
-              </button>
             </nav>
           </div>
 
@@ -397,9 +546,6 @@ export default function DesktopView(props: DesktopViewProps) {
                 <Clock size={13} className="text-indigo-400" />
                 <span>{currentTime || '00:00'}</span>
               </div>
-              <button onClick={() => alert('Settings menu opened.')} className="p-1 hover:text-white text-zinc-400 transition cursor-pointer" title="Settings">
-                <Settings size={13} />
-              </button>
             </div>
             <p className="text-[10px] text-zinc-400 leading-tight">Live Command Center active.</p>
           </div>
@@ -896,40 +1042,34 @@ export default function DesktopView(props: DesktopViewProps) {
                 </div>
               )}
 
-              {/* MODAL DELETE CONFIRMATION */}
-              {deletingTransaction && (
-                <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-                  <div className="bg-white rounded-2xl p-5 w-full max-w-sm border border-slate-100 shadow-2xl space-y-3.5 animate-in fade-in zoom-in-95">
+              {/* MODAL CUSTOM DELETE CHAT SESSION */}
+              {deletingSessionId && (
+                <div className="fixed inset-0 z-[60] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+                  <div className="bg-[#111318] text-white rounded-2xl p-5 w-full max-w-xs border border-zinc-800 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 font-sans">
                     <div className="flex items-center gap-3">
-                      <div className="p-2.5 bg-rose-50 text-rose-600 rounded-xl">
+                      <div className="p-2.5 bg-rose-500/10 text-rose-500 rounded-xl border border-rose-500/20">
                         <Trash2 size={18} />
                       </div>
                       <div>
-                        <h3 className="font-bold text-sm text-slate-900">Delete Transaction</h3>
-                        <p className="text-xs text-slate-400">Are you sure you want to remove this record?</p>
+                        <h3 className="font-bold text-sm text-white">Hapus Obrolan?</h3>
+                        <p className="text-[11px] text-zinc-400">Riwayat percakapan ini akan dihapus permanen.</p>
                       </div>
                     </div>
 
-                    <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-xs">
-                      <p className="font-bold text-slate-800">{deletingTransaction.title}</p>
-                      <p className="text-[10px] text-slate-400 capitalize">
-                        {deletingTransaction.category || 'General'} • {formatAmount(Number(deletingTransaction.amount))}
-                      </p>
-                    </div>
-
                     <div className="flex justify-end gap-2 pt-1">
-                      <button onClick={() => setDeletingTransaction(null)} className="px-3.5 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-semibold hover:bg-slate-200 transition cursor-pointer">
-                        Cancel
+                      <button
+                        type="button"
+                        onClick={() => setDeletingSessionId(null)}
+                        className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+                      >
+                        Batal
                       </button>
                       <button
-                        onClick={async () => {
-                          await supabase.from('transactions').delete().eq('id', deletingTransaction.id);
-                          setDeletingTransaction(null);
-                          fetchTransactions();
-                        }}
-                        className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer"
+                        type="button"
+                        onClick={confirmDeleteSession}
+                        className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-lg shadow-rose-600/20"
                       >
-                        Delete
+                        Hapus
                       </button>
                     </div>
                   </div>
@@ -1016,45 +1156,116 @@ export default function DesktopView(props: DesktopViewProps) {
           {/* TAB GOALS */}
           {activeTab === 'goals' && <GoalsSection transactions={transactions} totalNetWorth={totalNetWorth} onRefresh={fetchGoals} />}
 
-          {/* TAB NEWS */}
-          {activeTab === 'news' && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 text-center space-y-2 text-xs">
-              <Newspaper size={32} className="mx-auto text-indigo-600" />
-              <h2 className="font-bold text-sm text-slate-900">Global Market News API</h2>
-              <p className="text-slate-400 text-xs">Real-time market feeds platform active.</p>
-            </div>
-          )}
         </main>
       </div>
       
       {/* FLOATING CUTE AI HELPER MASCOT & ADVISORY PANEL */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
-        {/* ADVISOR CHAT WINDOW */}
         {isAdvisorOpen && (
-          <div className="w-[340px] h-[440px] bg-white rounded-3xl border border-slate-200 shadow-2xl flex flex-col overflow-hidden mb-3 animate-in fade-in slide-in-from-bottom-5 font-sans">
+          <div className="w-[350px] h-[450px] bg-white rounded-3xl border border-slate-200 shadow-2xl flex flex-col overflow-hidden mb-3 mr-14 animate-in fade-in slide-in-from-bottom-5 font-sans relative">
+            
             {/* HEADER */}
-            <div className="bg-[#111318] text-white p-3.5 flex justify-between items-center">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-2xl bg-indigo-600 flex items-center justify-center text-lg shadow-inner">
+            <div className="bg-[#111318] text-white p-3 flex justify-between items-center z-10">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsHistoryDrawerOpen(!isHistoryDrawerOpen)}
+                  className="p-1.5 hover:bg-zinc-800 rounded-xl text-zinc-300 hover:text-white transition cursor-pointer"
+                  title="Chat History"
+                >
+                  <Clock size={15} />
+                </button>
+                <div className="w-7 h-7 rounded-xl bg-indigo-600 flex items-center justify-center text-sm shadow-inner">
                   🐷
                 </div>
                 <div>
-                  <h3 className="font-bold text-xs tracking-tight text-white flex items-center gap-1.5">
+                  <h3 className="font-bold text-xs tracking-tight text-white flex items-center gap-1">
                     Piggy AI Advisor <Sparkles size={11} className="text-amber-400 fill-amber-400" />
                   </h3>
-                  <p className="text-[10px] text-zinc-400">Financial Health Assistant</p>
+                  <p className="text-[9px] text-zinc-400">Financial Assistant</p>
                 </div>
               </div>
-              <button
-                onClick={() => setIsAdvisorOpen(false)}
-                className="p-1 text-zinc-400 hover:text-white rounded-lg transition cursor-pointer"
-              >
-                <X size={16} />
-              </button>
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleNewChat}
+                  className="p-1.5 hover:bg-zinc-800 text-indigo-400 hover:text-indigo-300 rounded-xl transition text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                  title="New Chat"
+                >
+                  <Plus size={14} />
+                </button>
+                <button
+                  onClick={() => setIsAdvisorOpen(false)}
+                  className="p-1.5 text-zinc-400 hover:text-white rounded-xl transition cursor-pointer"
+                >
+                  <X size={15} />
+                </button>
+              </div>
             </div>
 
-            {/* QUICK STATS PREVIEW IN CHAT */}
-            <div className="bg-indigo-50/80 px-3 py-2 border-b border-indigo-100/80 flex justify-between items-center text-[10px]">
+            {/* CHAT HISTORY DRAWER SIDEBAR */}
+            {isHistoryDrawerOpen && (
+              <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-md z-30 p-3.5 flex flex-col text-white animate-in fade-in slide-in-from-left duration-200">
+                <div className="flex justify-between items-center border-b border-zinc-800 pb-2 mb-2 shrink-0">
+                  <h4 className="font-bold text-xs flex items-center gap-1.5">
+                    <Clock size={13} className="text-indigo-400" /> Chat History
+                  </h4>
+                  <button
+                    onClick={() => setIsHistoryDrawerOpen(false)}
+                    className="p-1 hover:text-zinc-400 cursor-pointer"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <button
+                  onClick={handleNewChat}
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 mb-3 transition cursor-pointer shrink-0"
+                >
+                  <Plus size={13} /> New Conversation
+                </button>
+
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
+                  {sessions.length === 0 ? (
+                    <p className="text-[11px] text-zinc-500 text-center py-4">Belum ada riwayat obrolan.</p>
+                  ) : (
+                    sessions.map((s) => (
+                      <div
+                        key={s.id}
+                        className={`w-full p-2.5 rounded-xl border text-xs flex justify-between items-center transition cursor-pointer ${
+                          activeSessionId === s.id
+                            ? 'bg-indigo-950/80 border-indigo-500 text-white font-semibold'
+                            : 'bg-zinc-800/60 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                        }`}
+                      >
+                        {/* Teks Judul Sesi saat diklik membuka percakapan */}
+                        <div
+                          onClick={() => loadSessionMessages(s.id)}
+                          className="flex-1 truncate pr-2 text-[11px] h-full flex items-center"
+                        >
+                          {s.title}
+                        </div>
+
+                        {/* Tombol Hapus */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletingSessionId(s.id);
+                          }}
+                          className="p-1.5 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/20 rounded-lg transition cursor-pointer shrink-0"
+                          title="Delete Chat"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* QUICK STATS PREVIEW */}
+            <div className="bg-indigo-50/80 px-3 py-1.5 border-b border-indigo-100/80 flex justify-between items-center text-[10px]">
               <span className="text-indigo-900 font-semibold">Net Worth: Rp {totalNetWorth.toLocaleString('id-ID')}</span>
               <span className="text-emerald-700 font-bold bg-emerald-100/80 px-2 py-0.5 rounded-md">
                 Cashflow: +Rp {netCashflow.toLocaleString('id-ID')}
@@ -1088,9 +1299,11 @@ export default function DesktopView(props: DesktopViewProps) {
                   </div>
                 </div>
               )}
+
+              <div ref={chatEndRef} />
             </div>
 
-            {/* INPUT FORM */}
+            {/* INPUT FORM (Tombol send dihapus karena sudah diwakili babi) */}
             <form onSubmit={handleSendAdvisor} className="p-2.5 bg-white border-t border-slate-100 flex gap-1.5">
               <input
                 type="text"
@@ -1099,26 +1312,45 @@ export default function DesktopView(props: DesktopViewProps) {
                 onChange={(e) => setAdvisorInput(e.target.value)}
                 className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none font-medium text-slate-800 placeholder:text-slate-400"
               />
-              <button
-                type="submit"
-                disabled={advisorLoading || !advisorInput.trim()}
-                className="p-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl transition cursor-pointer shrink-0"
-              >
-                <Send size={13} />
-              </button>
             </form>
           </div>
         )}
 
-        {/* FLOATING CUTE MASCOT BUTTON */}
-        <button
-          onClick={() => setIsAdvisorOpen(!isAdvisorOpen)}
-          className="group relative flex items-center justify-center w-13 h-13 rounded-full bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white shadow-xl hover:scale-105 active:scale-95 transition-all duration-200 border-2 border-white cursor-pointer"
-          title="Piggy AI Financial Advisor"
+        {/* FLOATING CUTE ANIMATED MASCOT (JADI TOMBOL SEND PAS CHAT TERBUKA) */}
+        <div
+          onClick={(e) => {
+            if (isAdvisorOpen) {
+              // Jika chat terbuka, klik babi akan mengirim pesan
+              handleSendAdvisor(e as any);
+            } else {
+              // Jika chat tertutup, klik babi akan membuka chat
+              setIsAdvisorOpen(true);
+            }
+          }}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          className="fixed bottom-2 right-2 z-50 flex flex-col items-center justify-center cursor-pointer group transition-transform duration-300 hover:scale-105 active:scale-95 select-none"
         >
-          <span className="text-2xl transition-transform duration-200 group-hover:bounce">🐷</span>
-          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full" />
-        </button>
+          {/* TOOLTIP HOVER */}
+          <div
+            className={`absolute top-3 bg-slate-900/90 text-white text-[10px] font-semibold px-2.5 py-1 rounded-xl shadow-lg border border-slate-700 transition-all duration-200 pointer-events-none whitespace-nowrap z-10 ${
+              isPiggyHovered ? 'opacity-100 -translate-y-1' : 'opacity-0 translate-y-1'
+            }`}
+          >
+            {isAdvisorOpen ? 'Kirim pesan 🐷' : 'Butuh saran keuangan?'}
+          </div>
+
+          {/* CONTAINER MASCOT (Ukuran w-48 h-48 tetap) */}
+          <div className="w-48 h-48 flex items-center justify-center drop-shadow-xl overflow-hidden">
+            <PiggyLottie
+              lottieRef={lottieRef}
+              src="https://lottie.host/3887dc40-5124-460c-afcb-8a6ffb763a2a/TgBStkObJw.lottie"
+            />
+          </div>
+
+          {/* STATUS BADGE ONLINE */}
+          <span className="absolute bottom-6 right-6 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full shadow-md animate-pulse z-10" />
+        </div>
       </div>
 
       {/* MODAL ADJUST BALANCE DENGAN OPSI RECORD TRANSACTION */}
@@ -1185,6 +1417,39 @@ export default function DesktopView(props: DesktopViewProps) {
           </form>
         </div>
       )}
-    </div>
+      {/* MODAL CUSTOM DELETE CHAT SESSION */}
+              {deletingSessionId && (
+                <div className="fixed inset-0 z-[60] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+                  <div className="bg-[#111318] text-white rounded-2xl p-5 w-full max-w-xs border border-zinc-800 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 font-sans">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-rose-500/10 text-rose-500 rounded-xl border border-rose-500/20">
+                        <Trash2 size={18} />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-sm text-white">Hapus Obrolan?</h3>
+                        <p className="text-[11px] text-zinc-400">Riwayat percakapan ini akan dihapus permanen.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setDeletingSessionId(null)}
+                        className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={confirmDeleteSession}
+                        className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-lg shadow-rose-600/20"
+                      >
+                        Hapus
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+    </div> 
   );
 }

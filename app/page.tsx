@@ -59,7 +59,6 @@ export default function Home() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'expenses' | 'investments' | 'tasks' | 'budgets' | 'goals' | 'news'>('dashboard');
   
-  // Independent Hide Balance States
   const [hiddenBalances, setHiddenBalances] = useState<{ [key: string]: boolean }>({
     portfolio: false,
     cash: false,
@@ -81,12 +80,7 @@ export default function Home() {
   const [showManualAdd, setShowManualAdd] = useState(false);
   const [manualTitle, setManualTitle] = useState('');
   const [manualAmount, setManualAmount] = useState('');
-  const [manualType, setManualType] = useState<'expense' | 'income'>('expense');
-  const [manualCategory, setManualCategory] = useState('Food & Beverage');
-  const [manualAccount, setManualAccount] = useState<'cash' | 'bank' | 'investment'>('bank');
-  const [manualDate, setManualDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // Adjust Balance Modal State
   const [adjustModal, setAdjustModal] = useState<{
     open: boolean;
     account: 'cash' | 'bank' | 'investment';
@@ -206,7 +200,40 @@ export default function Home() {
 
   const health = getHealthScore();
 
-  // Export CSV Real Function
+  // FUNGSI HANDLE SUBMIT REAL
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() && !selectedFile) return;
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ prompt: input }),
+      });
+
+      if (res.ok) {
+        setInput('');
+        setSelectedFile(null);
+        fetchTransactions(session.user.id);
+        showToast('Transaction added via AI!');
+      } else {
+        alert('Failed to process AI transaction.');
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleExportCSV = () => {
     if (transactions.length === 0) {
       alert('Tidak ada transaksi untuk diexport.');
@@ -298,15 +325,15 @@ export default function Home() {
         input={input}
         setInput={setInput}
         loading={loading}
-        handleSubmit={() => {}}
+        handleSubmit={handleSubmit}
         showManualAdd={showManualAdd}
         setShowManualAdd={setShowManualAdd}
         manualTitle={manualTitle}
         setManualTitle={setManualTitle}
         manualAmount={manualAmount}
         setManualAmount={setManualAmount}
-        manualAccount={manualAccount}
-        setManualAccount={setManualAccount}
+        manualAccount="bank"
+        setManualAccount={() => {}}
         handleManualAddSubmit={() => {}}
       />
 
@@ -335,7 +362,7 @@ export default function Home() {
         selectedFile={selectedFile}
         setSelectedFile={setSelectedFile}
         loading={loading}
-        handleSubmit={() => {}}
+        handleSubmit={handleSubmit}
         transactions={transactions}
         fetchTransactions={() => fetchTransactions()}
         fetchGoals={() => fetchGoals()}
