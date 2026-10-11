@@ -10,9 +10,10 @@ interface Transaction {
   id: string;
   title: string;
   amount: number;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'transfer';
   category: string;
   account?: 'cash' | 'bank' | 'investment';
+  to_account?: 'cash' | 'bank' | 'investment' | null;
   date: string;
   created_at?: string;
   user_id?: string;
@@ -51,6 +52,7 @@ const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#06b6d4'
 
 export default function Home() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [recurringList, setRecurringList] = useState<any[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [input, setInput] = useState('');
@@ -66,7 +68,7 @@ export default function Home() {
     investment: false,
   });
 
-  const [investmentMarketValue, setInvestmentMarketValue] = useState<number>(0);
+  const [investmentBalance, setInvestmentBalance] = useState<number>(0);
   const [assetFilter, setAssetFilter] = useState<'expense' | 'all' | 'income'>('expense');
   const [currentTime, setCurrentTime] = useState('');
 
@@ -105,6 +107,89 @@ export default function Home() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const processRecurringTransactions = async (userId: string) => {
+    try {
+      const { data: recurring } = await supabase
+        .from('recurring_transactions')
+        .select('*')
+        .eq('user_id', userId);
+
+      if (!recurring || recurring.length === 0) return;
+
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+
+      for (const item of recurring) {
+        const lastExec = item.last_executed_date ? new Date(item.last_executed_date) : null;
+        let shouldExecute = false;
+
+        if (!lastExec) {
+          shouldExecute = true;
+        } else {
+          const diffInMs = today.getTime() - lastExec.getTime();
+          const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+          const freq = item.frequency || 'monthly';
+
+          if (freq === 'weekly' && diffInDays >= 7) {
+            shouldExecute = true;
+          } else if (freq === 'interval_days' && diffInDays >= (item.interval_days || 10)) {
+            shouldExecute = true;
+          } else if (freq === 'monthly') {
+            const isSameMonth = lastExec.getFullYear() === today.getFullYear() && lastExec.getMonth() === today.getMonth();
+            if (!isSameMonth && today.getDate() >= (item.day_of_month || 1)) {
+              shouldExecute = true;
+            }
+          } else if (freq === 'yearly') {
+            const isSameYear = lastExec.getFullYear() === today.getFullYear();
+            if (!isSameYear) shouldExecute = true;
+          }
+        }
+
+        if (shouldExecute) {
+          const { error: txError } = await supabase.from('transactions').insert([{
+            user_id: userId,
+            title: `[Otomatis] ${item.title}`,
+            amount: Number(item.amount),
+            type: item.type,
+            category: item.category,
+            account: item.account,
+            to_account: item.to_account,
+            date: todayStr,
+          }]);
+
+          if (!txError) {
+            await supabase
+              .from('recurring_transactions')
+              .update({ last_executed_date: todayStr })
+              .eq('id', item.id);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error processing recurring transactions:', err);
+    }
+  };
+
+  const fetchRecurringTransactions = async (userId?: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const uid = userId || session?.user.id;
+      if (!uid) return;
+
+      const { data, error } = await supabase
+        .from('recurring_transactions')
+        .select('*')
+        .eq('user_id', uid)
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        setRecurringList(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch recurring list:', err);
+    }
+  };
+
   const checkUserAndFetch = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
@@ -112,9 +197,14 @@ export default function Home() {
       return;
     }
     setUserEmail(session.user.email || 'christopherirvyng');
-    fetchTransactions(session.user.id);
+    
+    await processRecurringTransactions(session.user.id);
+    
+    await fetchTransactions(session.user.id);
+    await fetchRecurringTransactions(session.user.id);
     fetchBudgets();
     fetchGoals();
+    fetchInvestmentHoldings();
   };
 
   const fetchTransactions = async (userId?: string) => {
@@ -149,37 +239,91 @@ export default function Home() {
     setHiddenBalances((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const calculateAccountBalance = (accountType: 'cash' | 'bank' | 'investment') => {
-    return transactions
-      .filter((t) => (t.account || 'bank') === accountType)
-      .reduce((acc, curr) => (curr.type === 'income' ? acc + Number(curr.amount) : acc - Number(curr.amount)), 0);
+  const parseTransactionAccounts = (t: Transaction) => {
+    const titleUpper = (t.title || '').toUpperCase().trim();
+    let fromAcc = (t.account || '').toLowerCase().trim();
+    let toAcc = (t.to_account || '').toLowerCase().trim();
+
+    if (t.type === 'transfer') {
+      if (titleUpper.includes('CASH ➔') || titleUpper.includes('CASH ->') || titleUpper.includes('CASH TO') || titleUpper.startsWith('TRANSFER: CASH')) fromAcc = 'cash';
+      else if (titleUpper.includes('BANK ➔') || titleUpper.includes('BANK ->') || titleUpper.includes('BANK TO') || titleUpper.startsWith('TRANSFER: BANK')) fromAcc = 'bank';
+      else if (titleUpper.includes('INVESTMENT ➔') || titleUpper.includes('INVESTMENT ->') || titleUpper.includes('INVESTMENT TO') || titleUpper.startsWith('TRANSFER: INVESTMENT')) fromAcc = 'investment';
+
+      if (titleUpper.includes('➔ BANK') || titleUpper.includes('-> BANK') || titleUpper.includes('TO BANK')) toAcc = 'bank';
+      else if (titleUpper.includes('➔ CASH') || titleUpper.includes('-> CASH') || titleUpper.includes('TO CASH')) toAcc = 'cash';
+      else if (titleUpper.includes('➔ INVESTMENT') || titleUpper.includes('-> INVESTMENT') || titleUpper.includes('TO INVESTMENT')) toAcc = 'investment';
+    }
+
+    return { fromAcc, toAcc };
+  };
+
+  const calculateAccountBalance = (targetAccount: 'cash' | 'bank') => {
+    return transactions.reduce((acc, t) => {
+      const amount = Number(t.amount) || 0;
+      const { fromAcc, toAcc } = parseTransactionAccounts(t);
+
+      if (t.type === 'income' && fromAcc === targetAccount) {
+        acc += amount;
+      } 
+      else if (t.type === 'expense' && fromAcc === targetAccount) {
+        acc -= amount;
+      } 
+      else if (t.type === 'transfer') {
+        if (fromAcc === targetAccount) {
+          acc -= amount;
+        }
+        if (toAcc === targetAccount) {
+          acc += amount;
+        }
+      }
+
+      return acc;
+    }, 0);
   };
 
   const cashBalance = calculateAccountBalance('cash');
   const bankBalance = calculateAccountBalance('bank');
 
   const fetchInvestmentHoldings = async () => {
-    const { data } = await supabase.from('investment_holdings').select('*');
-    if (data) {
+    const { data: holdingsData } = await supabase.from('investment_holdings').select('*');
+    const { data: txData } = await supabase.from('transactions').select('*');
+
+    let totalAssetMarketValue = 0;
+    if (holdingsData) {
       const USD_TO_IDR = 15500;
-      const totalVal = data.reduce((acc, h) => {
+      totalAssetMarketValue = holdingsData.reduce((acc, h) => {
         const isStock = h.type === 'stock';
         const shares = isStock ? Number(h.lots || 0) * 100 : Number(h.shares || 0);
         const currentPrice = Number(h.current_price || 0);
         const rawValue = shares * currentPrice;
         return acc + (h.type === 'crypto' ? rawValue * USD_TO_IDR : rawValue);
       }, 0);
-      setInvestmentMarketValue(totalVal);
     }
+
+    let uninvestedCash = 0;
+    if (txData) {
+      uninvestedCash = txData.reduce((acc: number, t: any) => {
+        const amount = Number(t.amount) || 0;
+        const { fromAcc, toAcc } = parseTransactionAccounts(t);
+
+        if (t.type === 'expense' && fromAcc === 'investment') return acc - amount;
+        if (t.type === 'income' && fromAcc === 'investment') return acc + amount;
+
+        if (t.type === 'transfer') {
+          if (fromAcc === 'investment') acc -= amount;
+          if (toAcc === 'investment') acc += amount;
+        }
+        return acc;
+      }, 0);
+    }
+
+    setInvestmentBalance(totalAssetMarketValue + uninvestedCash);
   };
 
   useEffect(() => {
-    if (activeTab === 'dashboard' || activeTab === 'investments') {
-      fetchInvestmentHoldings();
-    }
-  }, [activeTab]);
+    fetchInvestmentHoldings();
+  }, [activeTab, transactions]);
 
-  const investmentBalance = investmentMarketValue > 0 ? investmentMarketValue : calculateAccountBalance('investment');
   const totalNetWorth = cashBalance + bankBalance + investmentBalance;
 
   const totalIncomeMonth = transactions
@@ -200,7 +344,6 @@ export default function Home() {
 
   const health = getHealthScore();
 
-  // FUNGSI HANDLE SUBMIT REAL
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() && !selectedFile) return;
@@ -216,16 +359,29 @@ export default function Home() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ prompt: input }),
+        body: JSON.stringify({ 
+          prompt: input, 
+          balances: {
+            cash: cashBalance,
+            bank: bankBalance,
+            investment: investmentBalance,
+          }
+        }),
       });
 
       if (res.ok) {
         setInput('');
         setSelectedFile(null);
-        fetchTransactions(session.user.id);
+
+        // PERBAIKAN REFRESH OTOMATIS: Fetch ulang semua data transaksi, rutin & investasi
+        await processRecurringTransactions(session.user.id);
+        await fetchTransactions(session.user.id);
+        await fetchRecurringTransactions(session.user.id);
+        await fetchInvestmentHoldings();
+        
         showToast('Transaction added via AI!');
       } else {
-        alert('Failed to process AI transaction.');
+        showToast('Failed to process AI transaction.');
       }
     } catch (err) {
       console.error(err);
@@ -241,7 +397,7 @@ export default function Home() {
       return;
     }
 
-    const headers = ['ID', 'Title', 'Amount', 'Type', 'Category', 'Account', 'Date'];
+    const headers = ['ID', 'Title', 'Amount', 'Type', 'Category', 'Account', 'To Account', 'Date'];
     const csvRows = [headers.join(',')];
 
     transactions.forEach((t) => {
@@ -252,6 +408,7 @@ export default function Home() {
         t.type,
         `"${t.category || 'General'}"`,
         `"${t.account || 'bank'}"`,
+        `"${t.to_account || ''}"`,
         `"${t.date}"`,
       ];
       csvRows.push(row.join(','));
@@ -267,8 +424,6 @@ export default function Home() {
     link.click();
     document.body.removeChild(link);
     showToast('Transactions exported to CSV!');
-    setToastMessage("Berhasil mendownload laporan CSV!");
-    setTimeout(() => setToastMessage(null), 3000);
   };
 
   const handleOpenAdjust = (account: 'cash' | 'bank' | 'investment') => {
@@ -284,23 +439,25 @@ export default function Home() {
   };
 
   const categoryChartData = Object.values(
-    transactions.reduce((acc: { [key: string]: { name: string; value: number; type: 'income' | 'expense' } }, curr) => {
-      const rawType = (curr.type || '').toLowerCase();
-      const type: 'income' | 'expense' = rawType === 'income' ? 'income' : 'expense';
+    transactions
+      .filter((t) => t.type !== 'transfer')
+      .reduce((acc: { [key: string]: { name: string; value: number; type: 'income' | 'expense' } }, curr) => {
+        const rawType = (curr.type || '').toLowerCase();
+        const type: 'income' | 'expense' = rawType === 'income' ? 'income' : 'expense';
 
-      const categoryName = curr.category || (type === 'income' ? 'Salary / Income' : 'General');
-      const key = `${categoryName.toLowerCase()}_${type}`;
+        const categoryName = curr.category || (type === 'income' ? 'Salary / Income' : 'General');
+        const key = `${categoryName.toLowerCase()}_${type}`;
 
-      if (!acc[key]) {
-        acc[key] = {
-          name: categoryName,
-          value: 0,
-          type: type,
-        };
-      }
-      acc[key].value += Number(curr.amount || 0);
-      return acc;
-    }, {})
+        if (!acc[key]) {
+          acc[key] = {
+            name: categoryName,
+            value: 0,
+            type: type,
+          };
+        }
+        acc[key].value += Number(curr.amount || 0);
+        return acc;
+      }, {})
   );
 
   const username = userEmail?.split('@')[0] || 'christopherirvyng';
@@ -341,8 +498,8 @@ export default function Home() {
       />
 
       <DesktopView
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        activeTab={activeTab as any}
+        setActiveTab={setActiveTab as any}
         username={username}
         currentTime={currentTime}
         toastMessage={toastMessage}
@@ -367,7 +524,20 @@ export default function Home() {
         loading={loading}
         handleSubmit={handleSubmit}
         transactions={transactions}
-        fetchTransactions={() => fetchTransactions()}
+        recurringList={recurringList}
+        fetchTransactions={async () => {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+            await fetchTransactions(session.user.id);
+            await fetchRecurringTransactions(session.user.id);
+          }
+        }}
+        fetchRecurringTransactions={async () => {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+            await fetchRecurringTransactions(session.user.id);
+          }
+        }}
         fetchGoals={() => fetchGoals()}
         fetchInvestmentHoldings={() => fetchInvestmentHoldings()}
         assetFilter={assetFilter}
@@ -394,7 +564,6 @@ export default function Home() {
         setManualTitle={setManualTitle}
         manualAmount={manualAmount}
         setManualAmount={setManualAmount}
-        handleManualAddSubmit={() => {}}
         adjustModal={adjustModal}
         setAdjustModal={setAdjustModal}
       />

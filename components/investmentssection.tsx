@@ -2,48 +2,40 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { TrendingUp, Plus, Trash2, AreaChart as ChartIcon, Sliders, RefreshCw, Edit2, X, Check } from 'lucide-react';
+import { TrendingUp, Plus, Trash2, AreaChart as ChartIcon, Sliders, RefreshCw, Edit2, X, Check, Wallet } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
-// Asumsi Kurs USD ke IDR
 const USD_TO_IDR = 15500;
 
 export interface AssetHolding {
   id: string;
   ticker: string;
   type: 'stock' | 'crypto' | 'mutual_fund' | 'cash';
-  lots: number;           // Untuk Saham
-  shares: number;         // Total Lembar / Unit / Koin
-  buyPrice: number;       // Harga Beli (Rp untuk Saham, USD untuk Crypto)
-  amountInvested: number; // Total Modal (Rp untuk Saham, USD untuk Crypto)
-  currentPrice: number;   // Harga Pasar (Rp untuk Saham, USD untuk Crypto)
+  lots: number;
+  shares: number;
+  buyPrice: number;
+  amountInvested: number;
+  currentPrice: number;
   currency: 'IDR' | 'USD';
 }
 
 export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => void }) {
   const [activeSubTab, setActiveSubTab] = useState<'holdings' | 'simulator'>('holdings');
 
-  // --- HOLDING ASSETS STATE ---
   const [holdings, setHoldings] = useState<AssetHolding[]>([]);
+  const [uninvestedCash, setUninvestedCash] = useState<number>(0);
   const [loadingSync, setLoadingSync] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
 
-  // State Edit Modal
   const [editingAsset, setEditingAsset] = useState<AssetHolding | null>(null);
 
-  // Form Input Aset Baru
   const [newTicker, setNewTicker] = useState('');
   const [newType, setNewType] = useState<'stock' | 'crypto' | 'mutual_fund' | 'cash'>('stock');
-  
-  // Inputs Saham (IDR)
-  const [newLots, setNewLots] = useState('');            // Jumlah Lot
-  const [newStockBuyPrice, setNewStockBuyPrice] = useState(''); // Harga Beli Saham (Rp)
+  const [newLots, setNewLots] = useState('');
+  const [newStockBuyPrice, setNewStockBuyPrice] = useState('');
+  const [newTotalModalUSD, setNewTotalModalUSD] = useState('');
+  const [newCryptoBuyPriceUSD, setNewCryptoBuyPriceUSD] = useState('');
 
-  // Inputs Crypto (USD Flow)
-  const [newTotalModalUSD, setNewTotalModalUSD] = useState('');   // Modal dalam USD ($)
-  const [newCryptoBuyPriceUSD, setNewCryptoBuyPriceUSD] = useState(''); // Harga Koin dalam USD ($)
-
-  // --- SIMULATOR PARAMETER STATES ---
   const [initialCapital, setInitialCapital] = useState<number>(5000000);
   const [monthlyTopUp, setMonthlyTopUp] = useState<number>(500000);
   const [monthlyReturn, setMonthlyReturn] = useState<number>(2.5);
@@ -54,16 +46,47 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
     fetchHoldings();
   }, []);
 
-  // --- FETCH DATA DARI SUPABASE ---
+  // PERBAIKAN: FETCH UNINVESTED CASH TANPA USER_ID FILTER YANG KETAT
+  const fetchUninvestedCash = async () => {
+    try {
+      const { data, error } = await supabase.from('transactions').select('*');
+      if (!error && data) {
+        const cashInvestment = data.reduce((acc: number, t: any) => {
+          const amount = Number(t.amount) || 0;
+          const fromAcc = (t.account || 'bank').toLowerCase();
+          const toAcc = (t.to_account || '').toLowerCase();
+          const titleUpper = (t.title || '').toUpperCase();
+
+          if (t.type === 'expense' && fromAcc === 'investment') return acc - amount;
+          if (t.type === 'income' && fromAcc === 'investment') return acc + amount;
+          
+          if (t.type === 'transfer') {
+            if (fromAcc === 'investment') acc -= amount;
+            if (toAcc === 'investment' || titleUpper.includes('INVESTMENT')) acc += amount;
+          }
+          return acc;
+        }, 0);
+
+        setUninvestedCash(cashInvestment);
+        return cashInvestment;
+      }
+    } catch (err) {
+      console.error('Error fetching uninvested cash:', err);
+    }
+    return 0;
+  };
+
   const fetchHoldings = async () => {
     try {
-      const { data, error } = await supabase
+      const { data: holdingsData, error: holdingsErr } = await supabase
         .from('investment_holdings')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (!error && data) {
-        const formatted: AssetHolding[] = data.map((h: any) => ({
+      const rdnCashBalance = await fetchUninvestedCash();
+
+      if (!holdingsErr && holdingsData) {
+        const formatted: AssetHolding[] = holdingsData.map((h: any) => ({
           id: h.id,
           ticker: h.ticker,
           type: h.type,
@@ -74,6 +97,7 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
           currentPrice: Number(h.current_price || 0),
           currency: h.type === 'crypto' ? 'USD' : 'IDR',
         }));
+
         setHoldings(formatted);
         if (onRefresh) onRefresh();
       }
@@ -82,22 +106,22 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
     }
   };
 
-  // --- CALCULATIONS FOR HOLDINGS (KONVERSI USD KE IDR UNTUK TOTAL PORTFOLIO) ---
   const totalInvestedIDR = holdings.reduce((acc, h) => {
     const valueInIDR = h.currency === 'USD' ? h.amountInvested * USD_TO_IDR : h.amountInvested;
     return acc + valueInIDR;
   }, 0);
 
-  const totalCurrentValueIDR = holdings.reduce((acc, h) => {
+  const totalMarketValueIDR = holdings.reduce((acc, h) => {
     const rawVal = h.shares * h.currentPrice;
     const valueInIDR = h.currency === 'USD' ? rawVal * USD_TO_IDR : rawVal;
     return acc + valueInIDR;
   }, 0);
 
-  const totalPnLIDR = totalCurrentValueIDR - totalInvestedIDR;
+  const totalInvestmentBalanceIDR = totalMarketValueIDR + uninvestedCash;
+
+  const totalPnLIDR = totalMarketValueIDR - totalInvestedIDR;
   const totalPnLPercent = totalInvestedIDR > 0 ? ((totalPnLIDR / totalInvestedIDR) * 100).toFixed(2) : '0.00';
 
-  // --- SYNC REAL MARKET PRICE FROM API ---
   const handleSyncPrices = async () => {
     setLoadingSync(true);
     try {
@@ -124,6 +148,7 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
         })
       );
       setHoldings(updated);
+      await fetchUninvestedCash();
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error('Error syncing market prices:', err);
@@ -132,7 +157,6 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
     }
   };
 
-  // --- TAMBAH ASET BARU (SUPPORT USD & IDR) ---
   const handleAddHolding = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTicker) return;
@@ -169,22 +193,21 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
           console.error('Fetch live price failed during add:', err);
         }
       } else if (newType === 'crypto') {
-            amountInvested = Number(newTotalModalUSD) || 0;
-            buyPrice = Number(newCryptoBuyPriceUSD) || 0;
+        amountInvested = Number(newTotalModalUSD) || 0;
+        buyPrice = Number(newCryptoBuyPriceUSD) || 0;
 
-            // Ambil Live Market Price via API jika tidak dimasukkan manual
-            try {
-            const res = await fetch(`/api/stock-price?symbol=${newTicker}`);
-            const data = await res.json();
-            if (res.ok && data.price) {
-                currentPrice = Number(data.price);
-                if (!buyPrice) buyPrice = currentPrice;
-            }
-            } catch (err) {
-            console.error('Fetch live crypto price failed:', err);
-            }
+        try {
+          const res = await fetch(`/api/stock-price?symbol=${newTicker}`);
+          const data = await res.json();
+          if (res.ok && data.price) {
+            currentPrice = Number(data.price);
+            if (!buyPrice) buyPrice = currentPrice;
+          }
+        } catch (err) {
+          console.error('Fetch live crypto price failed:', err);
+        }
 
-            shares = buyPrice > 0 ? (amountInvested / buyPrice) : 0;
+        shares = buyPrice > 0 ? (amountInvested / buyPrice) : 0;
       }
 
       const payload = {
@@ -217,7 +240,6 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
     }
   };
 
-  // --- HAPUS ASET DARI SUPABASE ---
   const handleDeleteHolding = async (id: string) => {
     const { error } = await supabase.from('investment_holdings').delete().eq('id', id);
     if (!error) {
@@ -227,7 +249,6 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
     }
   };
 
-  // --- SAVE EDIT ASET KE SUPABASE ---
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAsset) return;
@@ -266,7 +287,6 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
     }
   };
 
-  // --- GENERATE DATA SIMULASI COMPOUNDING ---
   const generateChartData = () => {
     const P = Number(initialCapital) || 0;
     const PMT = Number(monthlyTopUp) || 0;
@@ -361,17 +381,23 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
       {/* SUBTAB 1: ASSET HOLDINGS & REALTIME PNL */}
       {activeSubTab === 'holdings' && (
         <div className="space-y-3">
-          {/* Top Summary Dashboard (Converted to Total IDR for Piggy Bank Dashboard) */}
-          <div className="grid grid-cols-3 gap-2.5">
-            <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl">
-              <p className="text-[9px] text-slate-600 font-bold uppercase">Total Modal (Capital IDR)</p>
-              <p className="text-xs font-bold text-slate-900 mt-0.5">Rp {totalInvestedIDR.toLocaleString('id-ID')}</p>
+          {/* Top Summary Dashboard (4 Card Grid) */}
+          <div className="grid grid-cols-4 gap-2">
+            <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-xl">
+              <p className="text-[9px] text-slate-600 font-bold uppercase">Total Saldo Investasi</p>
+              <p className="text-xs font-bold text-slate-900 mt-0.5">Rp {totalInvestmentBalanceIDR.toLocaleString('id-ID')}</p>
             </div>
-            <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl">
-              <p className="text-[9px] text-slate-600 font-bold uppercase">Nilai Pasar (Total IDR)</p>
-              <p className="text-xs font-bold text-slate-900 mt-0.5">Rp {totalCurrentValueIDR.toLocaleString('id-ID')}</p>
+            <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-xl">
+              <p className="text-[9px] text-slate-600 font-bold uppercase flex items-center gap-1">
+                <Wallet size={10} className="text-indigo-600" /> Cash RDN / Uninvested
+              </p>
+              <p className="text-xs font-bold text-indigo-700 mt-0.5">Rp {uninvestedCash.toLocaleString('id-ID')}</p>
             </div>
-            <div className={`p-2.5 rounded-xl border ${totalPnLIDR >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
+            <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-xl">
+              <p className="text-[9px] text-slate-600 font-bold uppercase">Nilai Portfolio (Aset)</p>
+              <p className="text-xs font-bold text-slate-900 mt-0.5">Rp {totalMarketValueIDR.toLocaleString('id-ID')}</p>
+            </div>
+            <div className={`p-2 rounded-xl border ${totalPnLIDR >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
               <p className="text-[9px] text-slate-700 font-bold uppercase">Total PnL (Unrealized)</p>
               <p className={`text-xs font-bold mt-0.5 ${totalPnLIDR >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                 {totalPnLIDR >= 0 ? '+' : ''}Rp {totalPnLIDR.toLocaleString('id-ID')} ({totalPnLPercent}%)
@@ -379,7 +405,7 @@ export default function InvestmentsSection({ onRefresh }: { onRefresh?: () => vo
             </div>
           </div>
 
-          {/* Form Input Asset Baru (Support USD vs IDR) */}
+          {/* Form Input Asset Baru */}
           <form onSubmit={handleAddHolding} className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
             <div className="flex justify-between items-center">
               <p className="font-bold text-slate-900 text-[10px]">Tambah Portfolio Aset</p>

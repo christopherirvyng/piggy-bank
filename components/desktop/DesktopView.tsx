@@ -33,6 +33,8 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
+  ArrowRightLeft,
+  Calendar as CalendarIcon,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
@@ -40,9 +42,7 @@ import BudgetSection from '@/components/budgetsection';
 import GoalsSection from '@/components/goalssection';
 import CalendarWidget from '@/components/calendarwidget';
 import InvestmentsSection from '@/components/investmentssection';
-
 import PiggyLottie from '@/components/PiggyLottie';
-
 
 interface DesktopViewProps {
   activeTab: string;
@@ -71,7 +71,9 @@ interface DesktopViewProps {
   loading: boolean;
   handleSubmit: (e: React.FormEvent) => void;
   transactions: any[];
+  recurringList?: any[];
   fetchTransactions: () => void;
+  fetchRecurringTransactions?: () => void;
   fetchGoals: () => void;
   fetchInvestmentHoldings: () => void;
   assetFilter: 'expense' | 'all' | 'income';
@@ -98,7 +100,6 @@ interface DesktopViewProps {
   setManualTitle: (val: string) => void;
   manualAmount: string;
   setManualAmount: (val: string) => void;
-  handleManualAddSubmit: (e: React.FormEvent) => void;
   adjustModal: { open: boolean; account: 'cash' | 'bank' | 'investment'; currentBal: number };
   setAdjustModal: (val: any) => void;
 }
@@ -129,7 +130,9 @@ export default function DesktopView(props: DesktopViewProps) {
     loading,
     handleSubmit,
     transactions,
+    recurringList: initialRecurringList = [],
     fetchTransactions,
+    fetchRecurringTransactions: propFetchRecurringTransactions,
     fetchGoals,
     fetchInvestmentHoldings,
     assetFilter,
@@ -156,23 +159,61 @@ export default function DesktopView(props: DesktopViewProps) {
     setAdjustModal,
   } = props;
 
+  // Custom Toast State
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  // State List Transaction Tab & Recurring
+  const [historyTab, setHistoryTab] = useState<'history' | 'recurring'>('history');
+  const [localRecurringList, setLocalRecurringList] = useState<any[]>(initialRecurringList);
+
+  useEffect(() => {
+    setLocalRecurringList(initialRecurringList);
+  }, [initialRecurringList]);
+
   // Form State Adjust Balance Modal
   const [newTargetBalance, setNewTargetBalance] = useState('');
   const [recordTransaction, setRecordTransaction] = useState(true);
 
-  // Form Manual Add
+  // Form Manual Add & Recurring State
   const [manualCategory, setManualCategory] = useState('Food & Drinks');
-  const [manualAccount, setManualAccount] = useState<'bank' | 'cash'>('bank');
+  const [manualAccount, setManualAccount] = useState<'bank' | 'cash' | 'investment'>('bank');
+  const [manualToAccount, setManualToAccount] = useState<'bank' | 'cash' | 'investment'>('cash');
   const [manualDate, setManualDate] = useState(new Date().toISOString().split('T')[0]);
+  const [manualType, setManualType] = useState<'expense' | 'income' | 'transfer'>('expense');
 
-  // Modal Edit State
+  // Recurring Inputs
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [frequency, setFrequency] = useState<'weekly' | 'interval_days' | 'monthly' | 'yearly'>('monthly');
+  const [dayOfMonth, setDayOfMonth] = useState<number>(1);
+  const [intervalDays, setIntervalDays] = useState<number>(10);
+
+  // Modal Edit State (Biasa)
   const [editingTransaction, setEditingTransaction] = useState<any>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editAmount, setEditAmount] = useState('');
+  const [editCategory, setEditCategory] = useState('Food & Drinks');
   const [editDate, setEditDate] = useState('');
-  const [editAccount, setEditAccount] = useState<'bank' | 'cash'>('bank');
+  const [editAccount, setEditAccount] = useState<'bank' | 'cash' | 'investment'>('bank');
+  const [editToAccount, setEditToAccount] = useState<'bank' | 'cash' | 'investment'>('cash');
+  const [editType, setEditType] = useState<'expense' | 'income' | 'transfer'>('expense');
 
-  // Modal Delete State
+  // Modal Edit State (Rutin)
+  const [editingRecurring, setEditingRecurring] = useState<any>(null);
+  const [editRecTitle, setEditRecTitle] = useState('');
+  const [editRecAmount, setEditRecAmount] = useState('');
+  const [editRecCategory, setEditRecCategory] = useState('Food & Drinks');
+  const [editRecAccount, setEditRecAccount] = useState<'bank' | 'cash' | 'investment'>('bank');
+  const [editRecToAccount, setEditRecToAccount] = useState<'bank' | 'cash' | 'investment'>('cash');
+  const [editRecType, setEditRecType] = useState<'expense' | 'income' | 'transfer'>('expense');
+  const [editRecFrequency, setEditRecFrequency] = useState<'weekly' | 'interval_days' | 'monthly' | 'yearly'>('monthly');
+  const [editRecDayOfMonth, setEditRecDayOfMonth] = useState<number>(1);
+  const [editRecIntervalDays, setEditRecIntervalDays] = useState<number>(10);
+
+  // Modal Delete State Transaksi
   const [deletingTransaction, setDeletingTransaction] = useState<any>(null);
 
   const netCashflow = totalIncomeMonth - totalExpenseMonth;
@@ -183,10 +224,87 @@ export default function DesktopView(props: DesktopViewProps) {
     if (assetFilter === 'income') return itemType === 'income';
     return true;
   });
-  
+
   const totalCategoryAmount = filteredChartData.reduce((acc, item) => acc + item.value, 0);
 
-  // Handler Adjust Balance Submit
+  const fetchRecurringTransactions = async () => {
+    if (propFetchRecurringTransactions) {
+      propFetchRecurringTransactions();
+      return;
+    }
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const { data, error } = await supabase
+        .from('recurring_transactions')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        setLocalRecurringList(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch recurring list:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecurringTransactions();
+  }, []);
+
+  const handleRefreshAll = async () => {
+    await fetchTransactions();
+    await fetchRecurringTransactions();
+  };
+
+  const handleDeleteRecurring = async (id: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const { error } = await supabase
+        .from('recurring_transactions')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', session.user.id);
+
+      if (!error) {
+        showToast('Transaksi rutin berhasil dihapus', 'success');
+        await handleRefreshAll();
+      } else {
+        showToast('Gagal menghapus transaksi rutin', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteTransaction = async (id: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const { error } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', session.user.id);
+
+      if (error) {
+        showToast('Gagal menghapus transaksi', 'error');
+        return;
+      }
+
+      showToast('Transaksi berhasil dihapus', 'success');
+      setDeletingTransaction(null);
+      await handleRefreshAll();
+    } catch (err) {
+      console.error('Failed to delete transaction:', err);
+    }
+  };
+
   const handleSaveAdjustBalance = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetVal = Number(newTargetBalance);
@@ -203,66 +321,96 @@ export default function DesktopView(props: DesktopViewProps) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
 
-    if (recordTransaction) {
-      // Rekam sebagai transaksi penyesuaian
-      await supabase.from('transactions').insert([
-        {
-          title: `Balance Adjustment (${adjustModal.account})`,
-          amount: Math.abs(diff),
-          type: diff > 0 ? 'income' : 'expense',
-          category: 'Adjustment/Transfer',
-          account: adjustModal.account,
-          date: new Date().toISOString().split('T')[0],
-          user_id: session.user.id,
-        },
-      ]);
-    } else {
-      // Jika tidak mau dimasukkan ke history, buat dummy adjustment yang dikaitkan khusus
-      await supabase.from('transactions').insert([
-        {
-          title: `Balance Adjustment (Direct)`,
-          amount: Math.abs(diff),
-          type: diff > 0 ? 'income' : 'expense',
-          category: 'Adjustment/Transfer',
-          account: adjustModal.account,
-          date: new Date().toISOString().split('T')[0],
-          user_id: session.user.id,
-        },
-      ]);
-    }
+    await supabase.from('transactions').insert([
+      {
+        title: recordTransaction ? `Balance Adjustment (${adjustModal.account})` : `Balance Adjustment (Direct)`,
+        amount: Math.abs(diff),
+        type: diff > 0 ? 'income' : 'expense',
+        category: 'Others',
+        account: adjustModal.account,
+        date: new Date().toISOString().split('T')[0],
+        user_id: session.user.id,
+      },
+    ]);
 
+    showToast('Saldo berhasil disesuaikan', 'success');
     setNewTargetBalance('');
     setAdjustModal({ ...adjustModal, open: false });
-    fetchTransactions();
+    await handleRefreshAll();
   };
 
   const handleCustomManualSubmit = async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!manualTitle || !manualAmount) return;
+    e.preventDefault();
+    if (!manualAmount) return;
 
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
 
-      await supabase.from('transactions').insert([
+    let titleToSave = manualTitle;
+    let categoryToSave = manualCategory;
+
+    if (manualType === 'transfer') {
+      categoryToSave = 'Transfer';
+      if (!manualTitle.trim()) {
+        titleToSave = `Transfer: ${manualAccount.toUpperCase()} ➔ ${manualToAccount.toUpperCase()}`;
+      }
+    } else {
+      if (!manualTitle.trim()) {
+        titleToSave = manualCategory;
+      }
+    }
+
+    if (isRecurring) {
+      const { error } = await supabase.from('recurring_transactions').insert([
         {
-          title: manualTitle,
+          title: titleToSave,
           amount: Number(manualAmount),
-          category: manualCategory,
+          type: manualType,
+          category: categoryToSave,
           account: manualAccount,
-          date: manualDate,
-          type: 'expense',
+          to_account: manualType === 'transfer' ? manualToAccount : null,
+          frequency: frequency,
+          day_of_month: frequency === 'monthly' ? Number(dayOfMonth) : null,
+          interval_days: frequency === 'interval_days' ? Number(intervalDays) : null,
           user_id: session.user.id,
         },
       ]);
 
-      setManualTitle('');
-      setManualAmount('');
-      setShowManualAdd(false);
-      fetchTransactions();
-    };
-    
-    // State Advisor
-    // 1. Tambahkan state untuk Multi-Session di DesktopView.tsx
+      if (!error) {
+        showToast('Jadwal transaksi rutin berhasil ditambahkan!', 'success');
+        await handleRefreshAll();
+      } else {
+        showToast('Gagal menambahkan transaksi rutin', 'error');
+      }
+    } else {
+      const { error } = await supabase.from('transactions').insert([
+        {
+          title: titleToSave,
+          amount: Number(manualAmount),
+          category: categoryToSave,
+          account: manualAccount,
+          to_account: manualType === 'transfer' ? manualToAccount : null,
+          date: manualDate,
+          type: manualType,
+          user_id: session.user.id,
+        },
+      ]);
+
+      if (!error) {
+        showToast('Transaksi berhasil ditambahkan!', 'success');
+        await handleRefreshAll();
+      } else {
+        showToast('Gagal menambahkan transaksi', 'error');
+      }
+    }
+
+    setManualTitle('');
+    setManualAmount('');
+    setIsRecurring(false);
+    setShowManualAdd(false);
+  };
+
+  // State Advisor AI
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; created_at: string }>>([]);
@@ -273,7 +421,6 @@ export default function DesktopView(props: DesktopViewProps) {
   const [advisorLoading, setAdvisorLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Fetch Daftar Sesi Percakapan
   const fetchSessions = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -291,7 +438,6 @@ export default function DesktopView(props: DesktopViewProps) {
     }
   };
 
-  // Fetch Pesan dalam Sesi Spesifik
   const loadSessionMessages = async (sessionId: string) => {
     try {
       setAdvisorLoading(true);
@@ -324,7 +470,6 @@ export default function DesktopView(props: DesktopViewProps) {
     }
   };
 
-  // Start New Chat Session
   const handleNewChat = () => {
     setActiveSessionId(null);
     setIsHistoryDrawerOpen(false);
@@ -337,7 +482,6 @@ export default function DesktopView(props: DesktopViewProps) {
     ]);
   };
 
-  // Initial Load
   useEffect(() => {
     if (isAdvisorOpen) {
       fetchSessions();
@@ -353,7 +497,6 @@ export default function DesktopView(props: DesktopViewProps) {
     }
   }, [advisorMessages, advisorLoading, isAdvisorOpen]);
 
-  // Send Message Handler
   const handleSendAdvisor = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!advisorInput.trim() || advisorLoading) return;
@@ -414,18 +557,8 @@ export default function DesktopView(props: DesktopViewProps) {
     }
   };
 
-  // State Modal Konfirmasi Hapus Chat Session
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
 
-  // Delete Session Handler (membuka modal custom)
-  // Delete Session Handler (Mencegah event bubbling)
-  const handleDeleteSession = (sId: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDeletingSessionId(sId);
-  };
-
-  // Eksekusi Hapus Session
   const confirmDeleteSession = async () => {
     if (!deletingSessionId) return;
 
@@ -460,7 +593,7 @@ export default function DesktopView(props: DesktopViewProps) {
 
   const handleMouseLeave = () => {
     setIsPiggyHovered(false);
-    lottieRef.current?.stop(); // Panggil stop() supaya kereset ke frame 0
+    lottieRef.current?.stop();
   };
 
   return (
@@ -471,7 +604,17 @@ export default function DesktopView(props: DesktopViewProps) {
     >
       <div className="absolute inset-0 bg-black/10 backdrop-blur-[1px] pointer-events-none" />
 
-      {toastMessage && (
+      {/* CUSTOM TOAST NOTIFICATION POPUP */}
+      {toast && (
+        <div className={`fixed top-5 right-5 z-[100] flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-2xl text-xs font-bold text-white transition-all transform animate-in slide-in-from-top-3 ${
+          toast.type === 'success' ? 'bg-emerald-600 border border-emerald-500' : 'bg-rose-600 border border-rose-500'
+        }`}>
+          <div className="w-2 h-2 rounded-full bg-white animate-ping" />
+          <span>{toast.message}</span>
+        </div>
+      )}
+
+      {toastMessage && !toast && (
         <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 text-xs font-medium border border-slate-700 animate-in fade-in slide-in-from-top-3">
           {toastMessage.toLowerCase().includes('tidak') || toastMessage.toLowerCase().includes('gagal') ? (
             <AlertCircle size={16} className="text-amber-400" />
@@ -591,9 +734,7 @@ export default function DesktopView(props: DesktopViewProps) {
           {/* TAB DASHBOARD */}
           {activeTab === 'dashboard' && (
             <div className="space-y-3.5">
-              {/* TOP CARDS WITH INDIVIDUAL HIDE & ADJUST BUTTONS */}
               <div className="grid grid-cols-4 gap-3">
-                {/* PORTFOLIO CARD */}
                 <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/60 space-y-1">
                   <div className="flex justify-between items-center">
                     <div className="p-1.5 rounded-xl bg-indigo-600 text-white shadow-sm w-fit">
@@ -607,7 +748,6 @@ export default function DesktopView(props: DesktopViewProps) {
                   <h3 className="text-base font-bold text-slate-900">{formatAmount(totalNetWorth, 'portfolio')}</h3>
                 </div>
 
-                {/* CASH CARD */}
                 <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/60 space-y-1">
                   <div className="flex justify-between items-center">
                     <div className="p-1.5 rounded-xl bg-amber-500 text-white shadow-sm">
@@ -626,7 +766,6 @@ export default function DesktopView(props: DesktopViewProps) {
                   <h3 className="text-base font-bold text-slate-900">{formatAmount(cashBalance, 'cash')}</h3>
                 </div>
 
-                {/* BANK CARD */}
                 <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/60 space-y-1">
                   <div className="flex justify-between items-center">
                     <div className="p-1.5 rounded-xl bg-cyan-500 text-white shadow-sm">
@@ -645,7 +784,6 @@ export default function DesktopView(props: DesktopViewProps) {
                   <h3 className="text-base font-bold text-slate-900">{formatAmount(bankBalance, 'bank')}</h3>
                 </div>
 
-                {/* INVESTMENT CARD */}
                 <div className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/60 space-y-1">
                   <div className="flex justify-between items-center">
                     <div className="p-1.5 rounded-xl bg-rose-500 text-white shadow-sm">
@@ -665,7 +803,6 @@ export default function DesktopView(props: DesktopViewProps) {
                 </div>
               </div>
 
-              {/* CASHFLOW SUMMARY */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="p-2.5 bg-indigo-50/70 border border-indigo-100 rounded-2xl flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
@@ -703,13 +840,12 @@ export default function DesktopView(props: DesktopViewProps) {
                 </div>
               </div>
 
-              {/* AI BAR */}
               <div className="bg-[#111318] text-white p-2.5 rounded-2xl flex items-center gap-2 shadow-sm">
                 <Sparkles size={15} className="text-indigo-400 shrink-0 ml-1" />
                 <form onSubmit={handleSubmit} className="flex-1 flex gap-2">
                   <input
                     type="text"
-                    placeholder='Type e.g. "KFC 45k" or "Set cash 500k"...'
+                    placeholder='Type e.g. "KFC 45k" or "Transfer cash ke bank 100k"...'
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     className="flex-1 bg-zinc-800/80 text-white px-3 py-1.5 rounded-xl text-xs focus:outline-none placeholder:text-zinc-500"
@@ -725,19 +861,19 @@ export default function DesktopView(props: DesktopViewProps) {
                 </form>
               </div>
 
-              {/* GRID MAIN CONTENT WITH MATCHED CARD HEIGHTS */}
               <div className="grid grid-cols-12 gap-3.5">
-                {/* LEFT COLUMN */}
                 <div className="col-span-7 flex flex-col gap-3.5">
                   <div className="h-[195px]">
                     <BudgetSection transactions={transactions} />
                   </div>
-                  <CalendarWidget transactions={transactions} onRefresh={fetchTransactions} />
+                  <CalendarWidget 
+                    transactions={transactions} 
+                    recurringList={localRecurringList} 
+                    onRefresh={handleRefreshAll} 
+                  />
                 </div>
 
-                {/* RIGHT COLUMN */}
                 <div className="col-span-5 flex flex-col gap-3.5">
-                  {/* ASSET ALLOCATION PIE CHART */}
                   <div className="h-[195px] bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between overflow-hidden">
                     <div className="flex justify-between items-center pb-1 border-b border-slate-100 shrink-0">
                       <h3 className="font-semibold text-slate-900 text-xs">Asset Allocation</h3>
@@ -809,7 +945,7 @@ export default function DesktopView(props: DesktopViewProps) {
                 <form onSubmit={handleSubmit} className="flex-1 flex gap-2">
                   <input
                     type="text"
-                    placeholder='Type e.g. "KFC 45k" or "Taxi 50k pake cash"...'
+                    placeholder='Type e.g. "KFC 45k" or "Transfer cash ke bank 100k"...'
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     className="flex-1 bg-zinc-800/80 text-white px-3 py-1.5 rounded-xl text-xs focus:outline-none placeholder:text-zinc-500"
@@ -825,11 +961,36 @@ export default function DesktopView(props: DesktopViewProps) {
                 </form>
               </div>
 
-              <CalendarWidget transactions={transactions} onRefresh={fetchTransactions} />
+              <CalendarWidget 
+                transactions={transactions} 
+                recurringList={localRecurringList} 
+                onRefresh={handleRefreshAll} 
+              />
 
               <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
                 <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                  <h3 className="font-bold text-xs text-slate-900">Transaction History</h3>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setHistoryTab('history')}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold transition ${
+                        historyTab === 'history' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'
+                      }`}
+                    >
+                      Transaction History
+                    </button>
+                    <button
+                      onClick={() => setHistoryTab('recurring')}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                        historyTab === 'recurring' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span>Jadwal Rutin</span>
+                      <span className="bg-indigo-100 text-indigo-800 text-[10px] px-1.5 py-0.2 rounded-full font-black">
+                        {localRecurringList.length}
+                      </span>
+                    </button>
+                  </div>
+
                   <button
                     onClick={() => setShowManualAdd(!showManualAdd)}
                     className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-xl flex items-center gap-1 transition cursor-pointer"
@@ -840,18 +1001,31 @@ export default function DesktopView(props: DesktopViewProps) {
 
                 {showManualAdd && (
                   <form onSubmit={handleCustomManualSubmit} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 text-xs animate-in fade-in">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       <div className="space-y-1">
-                        <label className="font-semibold text-slate-600 text-[11px]">Title</label>
+                        <label className="font-semibold text-slate-600 text-[11px]">Type</label>
+                        <select
+                          value={manualType}
+                          onChange={(e) => setManualType(e.target.value as 'expense' | 'income' | 'transfer')}
+                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium cursor-pointer"
+                        >
+                          <option value="expense">Expense</option>
+                          <option value="income">Income</option>
+                          <option value="transfer">Transfer</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-semibold text-slate-600 text-[11px]">Title / Note</label>
                         <input
                           type="text"
-                          placeholder="Title / Note"
+                          placeholder={manualType === 'transfer' ? 'Opt. (e.g. Topup Gopay)' : 'Title / Note'}
                           value={manualTitle}
                           onChange={(e) => setManualTitle(e.target.value)}
                           className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium"
-                          required
                         />
                       </div>
+
                       <div className="space-y-1">
                         <label className="font-semibold text-slate-600 text-[11px]">Amount (Rp)</label>
                         <input
@@ -866,101 +1040,299 @@ export default function DesktopView(props: DesktopViewProps) {
                     </div>
 
                     <div className="grid grid-cols-3 gap-2">
-                      <div className="space-y-1">
-                        <label className="font-semibold text-slate-600 text-[11px]">Category</label>
-                        <select
-                          value={manualCategory}
-                          onChange={(e) => setManualCategory(e.target.value)}
-                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium cursor-pointer"
-                        >
-                          <option value="Food & Drinks">Food & Drinks</option>
-                          <option value="Transportation">Transportation</option>
-                          <option value="Shopping">Shopping</option>
-                          <option value="Bills & Utilities">Bills & Utilities</option>
-                          <option value="Entertainment">Entertainment</option>
-                          <option value="Healthcare">Healthcare</option>
-                          <option value="General">General</option>
-                        </select>
-                      </div>
+                      {manualType !== 'transfer' ? (
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-600 text-[11px]">Category</label>
+                          <select
+                            value={manualCategory}
+                            onChange={(e) => setManualCategory(e.target.value)}
+                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium cursor-pointer"
+                          >
+                            <option value="Food & Drinks">Food & Drinks</option>
+                            <option value="Transportation">Transportation</option>
+                            <option value="Utilities">Utilities</option>
+                            <option value="Entertainment">Entertainment</option>
+                            <option value="Healthcare">Healthcare</option>
+                            <option value="Investment">Investment</option>
+                            <option value="Salary">Salary</option>
+                            <option value="Bonus">Bonus</option>
+                            <option value="Others">Others</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-600 text-[11px]">From Account</label>
+                          <select
+                            value={manualAccount}
+                            onChange={(e) => setManualAccount(e.target.value as 'bank' | 'cash' | 'investment')}
+                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium cursor-pointer uppercase"
+                          >
+                            <option value="cash">Cash</option>
+                            <option value="bank">Bank</option>
+                            <option value="investment">Investment</option>
+                          </select>
+                        </div>
+                      )}
 
-                      <div className="space-y-1">
-                        <label className="font-semibold text-slate-600 text-[11px]">Payment Account</label>
-                        <select
-                          value={manualAccount}
-                          onChange={(e) => setManualAccount(e.target.value as 'bank' | 'cash')}
-                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium cursor-pointer"
-                        >
-                          <option value="bank">Bank</option>
-                          <option value="cash">Cash</option>
-                        </select>
-                      </div>
+                      {manualType !== 'transfer' ? (
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-600 text-[11px]">Account</label>
+                          <select
+                            value={manualAccount}
+                            onChange={(e) => setManualAccount(e.target.value as 'bank' | 'cash' | 'investment')}
+                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium cursor-pointer uppercase"
+                          >
+                            <option value="bank">Bank</option>
+                            <option value="cash">Cash</option>
+                            <option value="investment">Investment</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-600 text-[11px]">To Account</label>
+                          <select
+                            value={manualToAccount}
+                            onChange={(e) => setManualToAccount(e.target.value as 'bank' | 'cash' | 'investment')}
+                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium cursor-pointer uppercase"
+                          >
+                            <option value="bank">Bank</option>
+                            <option value="cash">Cash</option>
+                            <option value="investment">Investment</option>
+                          </select>
+                        </div>
+                      )}
 
-                      <div className="space-y-1">
-                        <label className="font-semibold text-slate-600 text-[11px]">Date</label>
+                      {!isRecurring && (
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-600 text-[11px]">Date</label>
+                          <input
+                            type="date"
+                            value={manualDate}
+                            onChange={(e) => setManualDate(e.target.value)}
+                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium cursor-pointer"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-2 pt-1 border-t border-slate-200/60">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
                         <input
-                          type="date"
-                          value={manualDate}
-                          onChange={(e) => setManualDate(e.target.value)}
-                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none font-medium cursor-pointer"
+                          type="checkbox"
+                          checked={isRecurring}
+                          onChange={(e) => setIsRecurring(e.target.checked)}
+                          className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4 border-slate-300"
                         />
-                      </div>
+                        <span className="text-slate-700 font-semibold text-[11px]">
+                          Ulangi otomatis (Transaksi Rutin)
+                        </span>
+                      </label>
+
+                      {isRecurring && (
+                        <div className="grid grid-cols-2 gap-2 p-2.5 bg-indigo-50/70 rounded-xl border border-indigo-100 animate-in fade-in">
+                          <div className="space-y-1">
+                            <label className="font-semibold text-indigo-900 text-[11px]">Frekuensi Rutin</label>
+                            <select
+                              value={frequency}
+                              onChange={(e: any) => setFrequency(e.target.value)}
+                              className="w-full px-2 py-1.5 bg-white border border-indigo-200 rounded-xl text-xs font-medium cursor-pointer"
+                            >
+                              <option value="monthly">Tiap Bulan (Tanggal Spesifik)</option>
+                              <option value="weekly">Tiap Minggu (7 Hari)</option>
+                              <option value="interval_days">Tiap X Hari (misal: 10 Hari)</option>
+                              <option value="yearly">Tiap Tahun</option>
+                            </select>
+                          </div>
+
+                          {frequency === 'monthly' && (
+                            <div className="space-y-1">
+                              <label className="font-semibold text-indigo-900 text-[11px]">Setiap Tanggal (1-31)</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="31"
+                                value={dayOfMonth}
+                                onChange={(e) => setDayOfMonth(Number(e.target.value))}
+                                className="w-full px-2 py-1.5 bg-white border border-indigo-200 text-indigo-900 rounded-xl text-xs font-bold"
+                              />
+                            </div>
+                          )}
+
+                          {frequency === 'interval_days' && (
+                            <div className="space-y-1">
+                              <label className="font-semibold text-indigo-900 text-[11px]">Berapa Hari Sekali?</label>
+                              <input
+                                type="number"
+                                min="1"
+                                placeholder="10"
+                                value={intervalDays}
+                                onChange={(e) => setIntervalDays(Number(e.target.value))}
+                                className="w-full px-2 py-1.5 bg-white border border-indigo-200 text-indigo-900 rounded-xl text-xs font-bold"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex justify-end pt-1">
                       <button type="submit" className="px-4 py-1.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition cursor-pointer">
-                        Save Transaction
+                        {isRecurring ? 'Save Recurring Schedule' : 'Save Transaction'}
                       </button>
                     </div>
                   </form>
                 )}
 
-                <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-                  {transactions.length === 0 ? (
-                    <p className="text-xs text-slate-400 text-center py-3">No transactions recorded.</p>
-                  ) : (
-                    transactions.map((t) => (
-                      <div key={t.id} className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl flex justify-between items-center text-xs hover:bg-slate-100/60 transition group">
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-slate-800">{t.title}</span>
-                          </div>
-                          <p className="text-[10px] text-slate-400 capitalize">
-                            {t.category || 'General'} • {t.account || 'bank'} • {t.date}
-                          </p>
-                        </div>
+                {/* CONTENT PER TAB (HISTORY VS RECURRING) */}
+                {historyTab === 'history' ? (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
+                    {transactions.length === 0 ? (
+                      <p className="text-xs text-slate-400 text-center py-4">No transactions recorded.</p>
+                    ) : (
+                      transactions.map((t) => {
+                        const isAuto = t.title?.startsWith('[Otomatis]');
+                        return (
+                          <div key={t.id} className="p-2 px-3 bg-slate-50/80 border border-slate-200/60 rounded-xl flex justify-between items-center text-xs hover:bg-slate-100/80 transition group">
+                            <div className="flex items-center gap-2 truncate pr-2">
+                              {t.type === 'transfer' && <ArrowRightLeft size={13} className="text-indigo-500 shrink-0" />}
+                              
+                              <span className="font-bold text-slate-800 text-xs truncate max-w-[180px]">{t.title}</span>
 
-                        <div className="flex items-center gap-2">
-                          <span className={`font-bold text-xs ${t.type === 'income' ? 'text-emerald-600' : 'text-slate-800'}`}>
-                            {t.type === 'income' ? '+' : '-'}
-                            {formatAmount(Number(t.amount))}
-                          </span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200/80 shrink-0">
+                                {t.category || 'Others'}
+                              </span>
 
-                          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => {
-                                setEditingTransaction(t);
-                                setEditTitle(t.title);
-                                setEditAmount(String(t.amount));
-                                setEditDate(t.date || new Date().toISOString().split('T')[0]);
-                                setEditAccount(t.account?.toLowerCase() === 'cash' ? 'cash' : 'bank');
-                              }}
-                              className="p-1 text-slate-400 hover:text-indigo-600 rounded transition cursor-pointer"
-                              title="Edit"
-                            >
-                              <Edit2 size={12} />
-                            </button>
-                            <button onClick={() => setDeletingTransaction(t)} className="p-1 text-slate-400 hover:text-rose-600 rounded transition cursor-pointer" title="Delete">
-                              <Trash2 size={12} />
-                            </button>
+                              {isAuto && (
+                                <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded shrink-0">
+                                  Rutin
+                                </span>
+                              )}
+
+                              <span className="text-[11px] text-slate-400 font-medium shrink-0 ml-1">
+                                • {t.account?.toUpperCase() || 'BANK'} • {t.date}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className={`font-bold text-xs ${
+                                t.type === 'income' ? 'text-emerald-600' : t.type === 'transfer' ? 'text-indigo-600' : 'text-slate-900'
+                              }`}>
+                                {t.type === 'income' ? '+' : t.type === 'transfer' ? '↔ ' : '-'}
+                                {formatAmount(Number(t.amount))}
+                              </span>
+
+                              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() => {
+                                    setEditingTransaction(t);
+                                    setEditTitle(t.title || '');
+                                    setEditAmount(String(t.amount || ''));
+                                    setEditCategory(t.category || 'Others');
+                                    setEditDate(t.date || new Date().toISOString().split('T')[0]);
+                                    setEditType(t.type === 'income' ? 'income' : t.type === 'transfer' ? 'transfer' : 'expense');
+                                    
+                                    const acc = t.account?.toLowerCase();
+                                    if (acc === 'cash') setEditAccount('cash');
+                                    else if (acc === 'investment') setEditAccount('investment');
+                                    else setEditAccount('bank');
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-indigo-600 rounded transition cursor-pointer"
+                                  title="Edit"
+                                >
+                                  <Edit2 size={12} />
+                                </button>
+                                <button
+                                  onClick={() => setDeletingTransaction(t)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 rounded transition cursor-pointer"
+                                  title="Delete"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+                        );
+                      })
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
+                    {localRecurringList.length === 0 ? (
+                      <p className="text-xs text-slate-400 text-center py-4">Belum ada jadwal transaksi rutin terdaftar.</p>
+                    ) : (
+                      localRecurringList.map((rec) => {
+                        const getFreqText = () => {
+                          if (rec.frequency === 'weekly') return 'Setiap minggu';
+                          if (rec.frequency === 'interval_days') return `Setiap ${rec.interval_days} hari`;
+                          if (rec.frequency === 'yearly') return 'Setiap Tahun';
+                          return `Setiap tanggal ${rec.day_of_month}`;
+                        };
+
+                        return (
+                          <div
+                            key={rec.id}
+                            className="p-2 px-3 bg-slate-100/70 border border-dashed border-slate-300 rounded-xl flex justify-between items-center text-xs hover:bg-slate-100 transition group"
+                          >
+                            <div className="flex items-center gap-2 truncate pr-2">
+                              <span className="font-bold text-slate-800 text-xs truncate max-w-[180px]">{rec.title}</span>
+
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200/80 shrink-0">
+                                {rec.category || 'Others'}
+                              </span>
+
+                              <span className="text-[9px] bg-indigo-100 text-indigo-800 font-bold px-1.5 py-0.5 rounded shrink-0">
+                                ⏳ {getFreqText()}
+                              </span>
+
+                              <span className="text-[11px] text-slate-400 font-medium shrink-0 ml-1">
+                                • {rec.account?.toUpperCase()} • Terakhir: {rec.last_executed_date || 'Belum Pernah'}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-bold text-slate-700 text-xs">
+                                {formatAmount(Number(rec.amount))}
+                              </span>
+                              
+                              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                {/* BUTTON EDIT RECURRING */}
+                                <button
+                                  onClick={() => {
+                                    setEditingRecurring(rec);
+                                    setEditRecTitle(rec.title || '');
+                                    setEditRecAmount(String(rec.amount || ''));
+                                    setEditRecCategory(rec.category || 'Others');
+                                    setEditRecType(rec.type === 'income' ? 'income' : rec.type === 'transfer' ? 'transfer' : 'expense');
+                                    setEditRecAccount(rec.account || 'bank');
+                                    setEditRecToAccount(rec.to_account || 'cash');
+                                    setEditRecFrequency(rec.frequency || 'monthly');
+                                    setEditRecDayOfMonth(rec.day_of_month || 1);
+                                    setEditRecIntervalDays(rec.interval_days || 10);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-indigo-600 rounded transition cursor-pointer"
+                                  title="Edit Jadwal Rutin"
+                                >
+                                  <Edit2 size={12} />
+                                </button>
+
+                                <button
+                                  onClick={() => handleDeleteRecurring(rec.id)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 rounded transition cursor-pointer"
+                                  title="Hapus Jadwal Rutin"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
               </div>
 
-              {/* MODAL EDIT TRANSACTION */}
+              {/* MODAL EDIT TRANSAKSI BIASA */}
               {editingTransaction && (
                 <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
                   <div className="bg-white rounded-2xl p-5 w-full max-w-sm border border-slate-100 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
@@ -972,11 +1344,67 @@ export default function DesktopView(props: DesktopViewProps) {
                     </div>
 
                     <div className="space-y-3 text-xs">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-600">Type</label>
+                          <select
+                            value={editType}
+                            onChange={(e) => {
+                              const newType = e.target.value as 'expense' | 'income' | 'transfer';
+                              setEditType(newType);
+                              if (newType === 'transfer') {
+                                setEditCategory('Transfer');
+                              }
+                            }}
+                            className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 cursor-pointer"
+                          >
+                            <option value="expense">Expense</option>
+                            <option value="income">Income</option>
+                            <option value="transfer">Transfer</option>
+                          </select>
+                        </div>
+
+                        {editType !== 'transfer' ? (
+                          <div className="space-y-1">
+                            <label className="font-semibold text-slate-600">Category</label>
+                            <select
+                              value={editCategory}
+                              onChange={(e) => setEditCategory(e.target.value)}
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 cursor-pointer"
+                            >
+                              <option value="Food & Drinks">Food & Drinks</option>
+                              <option value="Transportation">Transportation</option>
+                              <option value="Utilities">Utilities</option>
+                              <option value="Entertainment">Entertainment</option>
+                              <option value="Healthcare">Healthcare</option>
+                              <option value="Investment">Investment</option>
+                              <option value="Salary">Salary</option>
+                              <option value="Bonus">Bonus</option>
+                              <option value="Others">Others</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <label className="font-semibold text-slate-600">From Account</label>
+                            <select
+                              value={editAccount}
+                              onChange={(e) => setEditAccount(e.target.value as 'bank' | 'cash' | 'investment')}
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 uppercase cursor-pointer"
+                            >
+                              <option value="cash">Cash</option>
+                              <option value="bank">Bank</option>
+                              <option value="investment">Investment</option>
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
                       <div className="space-y-1">
-                        <label className="font-semibold text-slate-600">Title</label>
+                        <label className="font-semibold text-slate-600">Title / Note</label>
                         <input
                           type="text"
                           value={editTitle}
+                          placeholder={editType === 'transfer' ? 'Opt. (e.g. Topup Gopay)' : 'Title'}
                           onChange={(e) => setEditTitle(e.target.value)}
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800"
                         />
@@ -993,26 +1421,42 @@ export default function DesktopView(props: DesktopViewProps) {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
+                        {editType !== 'transfer' ? (
+                          <div className="space-y-1">
+                            <label className="font-semibold text-slate-600">Payment Account</label>
+                            <select
+                              value={editAccount}
+                              onChange={(e) => setEditAccount(e.target.value as 'bank' | 'cash' | 'investment')}
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 uppercase cursor-pointer"
+                            >
+                              <option value="bank">Bank</option>
+                              <option value="cash">Cash</option>
+                              <option value="investment">Investment</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <label className="font-semibold text-slate-600">To Account</label>
+                            <select
+                              value={editToAccount}
+                              onChange={(e) => setEditToAccount(e.target.value as 'bank' | 'cash' | 'investment')}
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 uppercase cursor-pointer"
+                            >
+                              <option value="bank">Bank</option>
+                              <option value="cash">Cash</option>
+                              <option value="investment">Investment</option>
+                            </select>
+                          </div>
+                        )}
+
                         <div className="space-y-1">
                           <label className="font-semibold text-slate-600">Date</label>
                           <input
                             type="date"
                             value={editDate}
                             onChange={(e) => setEditDate(e.target.value)}
-                            className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 cursor-pointer"
+                            className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 cursor-pointer"
                           />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="font-semibold text-slate-600">Payment Account</label>
-                          <select
-                            value={editAccount}
-                            onChange={(e) => setEditAccount(e.target.value as 'bank' | 'cash')}
-                            className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 capitalize cursor-pointer"
-                          >
-                            <option value="bank">Bank</option>
-                            <option value="cash">Cash</option>
-                          </select>
                         </div>
                       </div>
                     </div>
@@ -1023,19 +1467,36 @@ export default function DesktopView(props: DesktopViewProps) {
                       </button>
                       <button
                         onClick={async () => {
-                          if (editTitle && editAmount) {
+                          if (editAmount) {
+                            let updatedTitle = editTitle;
+                            let updatedCategory = editCategory;
+
+                            if (editType === 'transfer') {
+                              updatedCategory = 'Transfer';
+                              if (!editTitle.trim()) {
+                                updatedTitle = `Transfer: ${editAccount.toUpperCase()} ➔ ${editToAccount.toUpperCase()}`;
+                              }
+                            } else {
+                              if (!editTitle.trim()) {
+                                updatedTitle = editCategory;
+                              }
+                            }
+
                             await supabase
                               .from('transactions')
                               .update({
-                                title: editTitle,
+                                title: updatedTitle,
                                 amount: Number(editAmount),
+                                category: updatedCategory,
                                 date: editDate,
                                 account: editAccount,
+                                type: editType,
                               })
                               .eq('id', editingTransaction.id);
 
+                            showToast('Perubahan transaksi disimpan', 'success');
                             setEditingTransaction(null);
-                            fetchTransactions();
+                            await handleRefreshAll();
                           }
                         }}
                         className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer"
@@ -1047,8 +1508,182 @@ export default function DesktopView(props: DesktopViewProps) {
                 </div>
               )}
 
-              {/* MODAL CUSTOM DELETE CHAT SESSION */}
-              {deletingSessionId && (
+              {/* MODAL EDIT TRANSAKSI RUTIN */}
+              {editingRecurring && (
+                <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl p-5 w-full max-w-sm border border-slate-100 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+                    <div className="flex justify-between items-center border-b border-slate-100 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <Clock size={16} className="text-indigo-600" />
+                        <h3 className="font-bold text-sm text-slate-900">Edit Jadwal Rutin</h3>
+                      </div>
+                      <button onClick={() => setEditingRecurring(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer">
+                        <X size={16} />
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 text-xs">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-600">Type</label>
+                          <select
+                            value={editRecType}
+                            onChange={(e) => setEditRecType(e.target.value as any)}
+                            className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 cursor-pointer"
+                          >
+                            <option value="expense">Expense</option>
+                            <option value="income">Income</option>
+                            <option value="transfer">Transfer</option>
+                          </select>
+                        </div>
+
+                        {editRecType !== 'transfer' ? (
+                          <div className="space-y-1">
+                            <label className="font-semibold text-slate-600">Category</label>
+                            <select
+                              value={editRecCategory}
+                              onChange={(e) => setEditRecCategory(e.target.value)}
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 cursor-pointer"
+                            >
+                              <option value="Food & Drinks">Food & Drinks</option>
+                              <option value="Transportation">Transportation</option>
+                              <option value="Utilities">Utilities</option>
+                              <option value="Entertainment">Entertainment</option>
+                              <option value="Healthcare">Healthcare</option>
+                              <option value="Investment">Investment</option>
+                              <option value="Salary">Salary</option>
+                              <option value="Bonus">Bonus</option>
+                              <option value="Others">Others</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <label className="font-semibold text-slate-600">From Account</label>
+                            <select
+                              value={editRecAccount}
+                              onChange={(e) => setEditRecAccount(e.target.value as any)}
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800 uppercase cursor-pointer"
+                            >
+                              <option value="cash">Cash</option>
+                              <option value="bank">Bank</option>
+                              <option value="investment">Investment</option>
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-semibold text-slate-600">Title / Note</label>
+                        <input
+                          type="text"
+                          value={editRecTitle}
+                          onChange={(e) => setEditRecTitle(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-semibold text-slate-600">Amount (Rp)</label>
+                        <input
+                          type="number"
+                          value={editRecAmount}
+                          onChange={(e) => setEditRecAmount(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none font-medium text-slate-800"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 p-2.5 bg-indigo-50/70 rounded-xl border border-indigo-100">
+                        <div className="space-y-1">
+                          <label className="font-semibold text-indigo-900 text-[11px]">Frekuensi Rutin</label>
+                          <select
+                            value={editRecFrequency}
+                            onChange={(e: any) => setEditRecFrequency(e.target.value)}
+                            className="w-full px-2 py-1.5 bg-white border border-indigo-200 rounded-xl text-xs font-medium cursor-pointer"
+                          >
+                            <option value="monthly">Tiap Bulan (Tanggal)</option>
+                            <option value="weekly">Tiap Minggu (7 Hari)</option>
+                            <option value="interval_days">Tiap X Hari</option>
+                            <option value="yearly">Tiap Tahun</option>
+                          </select>
+                        </div>
+
+                        {editRecFrequency === 'monthly' && (
+                          <div className="space-y-1">
+                            <label className="font-semibold text-indigo-900 text-[11px]">Tanggal (1-31)</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="31"
+                              value={editRecDayOfMonth}
+                              onChange={(e) => setEditRecDayOfMonth(Number(e.target.value))}
+                              className="w-full px-2 py-1.5 bg-white border border-indigo-200 text-indigo-900 rounded-xl text-xs font-bold"
+                            />
+                          </div>
+                        )}
+
+                        {editRecFrequency === 'interval_days' && (
+                          <div className="space-y-1">
+                            <label className="font-semibold text-indigo-900 text-[11px]">Berapa Hari Sekali?</label>
+                            <input
+                              type="number"
+                              min="1"
+                              value={editRecIntervalDays}
+                              onChange={(e) => setEditRecIntervalDays(Number(e.target.value))}
+                              className="w-full px-2 py-1.5 bg-white border border-indigo-200 text-indigo-900 rounded-xl text-xs font-bold"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <button onClick={() => setEditingRecurring(null)} className="px-3.5 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-semibold hover:bg-slate-200 transition cursor-pointer">
+                        Batal
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (editRecAmount) {
+                            let updatedTitle = editRecTitle;
+                            let updatedCategory = editRecCategory;
+
+                            if (editRecType === 'transfer') {
+                              updatedCategory = 'Transfer';
+                              if (!editRecTitle.trim()) {
+                                updatedTitle = `Transfer: ${editRecAccount.toUpperCase()} ➔ ${editRecToAccount.toUpperCase()}`;
+                              }
+                            }
+
+                            await supabase
+                              .from('recurring_transactions')
+                              .update({
+                                title: updatedTitle,
+                                amount: Number(editRecAmount),
+                                category: updatedCategory,
+                                account: editRecAccount,
+                                to_account: editRecType === 'transfer' ? editRecToAccount : null,
+                                type: editRecType,
+                                frequency: editRecFrequency,
+                                day_of_month: editRecFrequency === 'monthly' ? Number(editRecDayOfMonth) : null,
+                                interval_days: editRecFrequency === 'interval_days' ? Number(editRecIntervalDays) : null,
+                              })
+                              .eq('id', editingRecurring.id);
+
+                            showToast('Jadwal rutin berhasil diperbarui', 'success');
+                            setEditingRecurring(null);
+                            await handleRefreshAll();
+                          }
+                        }}
+                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer"
+                      >
+                        Simpan Perubahan
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODAL CONFIRM DELETE TRANSACTION */}
+              {deletingTransaction && (
                 <div className="fixed inset-0 z-[60] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
                   <div className="bg-[#111318] text-white rounded-2xl p-5 w-full max-w-xs border border-zinc-800 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 font-sans">
                     <div className="flex items-center gap-3">
@@ -1056,22 +1691,22 @@ export default function DesktopView(props: DesktopViewProps) {
                         <Trash2 size={18} />
                       </div>
                       <div>
-                        <h3 className="font-bold text-sm text-white">Hapus Obrolan?</h3>
-                        <p className="text-[11px] text-zinc-400">Riwayat percakapan ini akan dihapus permanen.</p>
+                        <h3 className="font-bold text-sm text-white">Hapus Transaksi?</h3>
+                        <p className="text-[11px] text-zinc-400">"{deletingTransaction.title}" akan dihapus secara permanen.</p>
                       </div>
                     </div>
 
                     <div className="flex justify-end gap-2 pt-1">
                       <button
                         type="button"
-                        onClick={() => setDeletingSessionId(null)}
+                        onClick={() => setDeletingTransaction(null)}
                         className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition cursor-pointer"
                       >
                         Batal
                       </button>
                       <button
                         type="button"
-                        onClick={confirmDeleteSession}
+                        onClick={() => handleDeleteTransaction(deletingTransaction.id)}
                         className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-lg shadow-rose-600/20"
                       >
                         Hapus
@@ -1163,13 +1798,11 @@ export default function DesktopView(props: DesktopViewProps) {
 
         </main>
       </div>
-      
+
       {/* FLOATING CUTE AI HELPER MASCOT & ADVISORY PANEL */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
         {isAdvisorOpen && (
           <div className="w-[350px] h-[450px] bg-white rounded-3xl border border-slate-200 shadow-2xl flex flex-col overflow-hidden mb-3 mr-14 animate-in fade-in slide-in-from-bottom-5 font-sans relative">
-            
-            {/* HEADER */}
             <div className="bg-[#111318] text-white p-3 flex justify-between items-center z-10">
               <div className="flex items-center gap-2">
                 <button
@@ -1207,7 +1840,6 @@ export default function DesktopView(props: DesktopViewProps) {
               </div>
             </div>
 
-            {/* CHAT HISTORY DRAWER SIDEBAR */}
             {isHistoryDrawerOpen && (
               <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-md z-30 p-3.5 flex flex-col text-white animate-in fade-in slide-in-from-left duration-200">
                 <div className="flex justify-between items-center border-b border-zinc-800 pb-2 mb-2 shrink-0">
@@ -1242,7 +1874,6 @@ export default function DesktopView(props: DesktopViewProps) {
                             : 'bg-zinc-800/60 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
                         }`}
                       >
-                        {/* Teks Judul Sesi saat diklik membuka percakapan */}
                         <div
                           onClick={() => loadSessionMessages(s.id)}
                           className="flex-1 truncate pr-2 text-[11px] h-full flex items-center"
@@ -1250,7 +1881,6 @@ export default function DesktopView(props: DesktopViewProps) {
                           {s.title}
                         </div>
 
-                        {/* Tombol Hapus */}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -1269,7 +1899,6 @@ export default function DesktopView(props: DesktopViewProps) {
               </div>
             )}
 
-            {/* QUICK STATS PREVIEW */}
             <div className="bg-indigo-50/80 px-3 py-1.5 border-b border-indigo-100/80 flex justify-between items-center text-[10px]">
               <span className="text-indigo-900 font-semibold">Net Worth: Rp {totalNetWorth.toLocaleString('id-ID')}</span>
               <span className="text-emerald-700 font-bold bg-emerald-100/80 px-2 py-0.5 rounded-md">
@@ -1277,7 +1906,6 @@ export default function DesktopView(props: DesktopViewProps) {
               </span>
             </div>
 
-            {/* MESSAGES LIST */}
             <div className="flex-1 p-3 overflow-y-auto custom-scrollbar space-y-2.5 text-xs bg-slate-50/50">
               {advisorMessages.map((m) => (
                 <div
@@ -1308,7 +1936,6 @@ export default function DesktopView(props: DesktopViewProps) {
               <div ref={chatEndRef} />
             </div>
 
-            {/* INPUT FORM (Tombol send dihapus karena sudah diwakili babi) */}
             <form onSubmit={handleSendAdvisor} className="p-2.5 bg-white border-t border-slate-100 flex gap-1.5">
               <input
                 type="text"
@@ -1321,22 +1948,18 @@ export default function DesktopView(props: DesktopViewProps) {
           </div>
         )}
 
-        {/* FLOATING CUTE ANIMATED MASCOT (JADI TOMBOL SEND PAS CHAT TERBUKA) */}
         <div
           onClick={(e) => {
             if (isAdvisorOpen) {
-              // Jika chat terbuka, klik babi akan mengirim pesan
               handleSendAdvisor(e as any);
             } else {
-              // Jika chat tertutup, klik babi akan membuka chat
               setIsAdvisorOpen(true);
             }
           }}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
-          className="fixed bottom-2 right-2 z-50 flex flex-col items-center justify-center cursor-pointer group transition-transform duration-300 hover:scale-105 active:scale-95 select-none"
+          className="fixed bottom-1 right-1 z-50 flex flex-col items-center justify-center cursor-pointer group transition-transform duration-300 hover:scale-105 active:scale-95 select-none"
         >
-          {/* TOOLTIP HOVER */}
           <div
             className={`absolute top-3 bg-slate-900/90 text-white text-[10px] font-semibold px-2.5 py-1 rounded-xl shadow-lg border border-slate-700 transition-all duration-200 pointer-events-none whitespace-nowrap z-10 ${
               isPiggyHovered ? 'opacity-100 -translate-y-1' : 'opacity-0 translate-y-1'
@@ -1345,20 +1968,18 @@ export default function DesktopView(props: DesktopViewProps) {
             {isAdvisorOpen ? 'Kirim pesan 🐷' : 'Butuh saran keuangan?'}
           </div>
 
-          {/* CONTAINER MASCOT (Ukuran w-48 h-48 tetap) */}
-          <div className="w-48 h-48 flex items-center justify-center drop-shadow-xl overflow-hidden">
+          <div className="w-45 h-45 flex items-center justify-center drop-shadow-xl overflow-hidden">
             <PiggyLottie
               lottieRef={lottieRef}
               src="https://lottie.host/3887dc40-5124-460c-afcb-8a6ffb763a2a/TgBStkObJw.lottie"
             />
           </div>
 
-          {/* STATUS BADGE ONLINE */}
           <span className="absolute bottom-6 right-6 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full shadow-md animate-pulse z-10" />
         </div>
       </div>
 
-      {/* MODAL ADJUST BALANCE DENGAN OPSI RECORD TRANSACTION */}
+      {/* MODAL ADJUST BALANCE */}
       {adjustModal.open && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <form onSubmit={handleSaveAdjustBalance} className="bg-white rounded-2xl p-5 w-full max-w-sm border border-slate-100 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
@@ -1422,39 +2043,40 @@ export default function DesktopView(props: DesktopViewProps) {
           </form>
         </div>
       )}
-      {/* MODAL CUSTOM DELETE CHAT SESSION */}
-              {deletingSessionId && (
-                <div className="fixed inset-0 z-[60] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-                  <div className="bg-[#111318] text-white rounded-2xl p-5 w-full max-w-xs border border-zinc-800 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 font-sans">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 bg-rose-500/10 text-rose-500 rounded-xl border border-rose-500/20">
-                        <Trash2 size={18} />
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-sm text-white">Hapus Obrolan?</h3>
-                        <p className="text-[11px] text-zinc-400">Riwayat percakapan ini akan dihapus permanen.</p>
-                      </div>
-                    </div>
 
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setDeletingSessionId(null)}
-                        className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition cursor-pointer"
-                      >
-                        Batal
-                      </button>
-                      <button
-                        type="button"
-                        onClick={confirmDeleteSession}
-                        className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-lg shadow-rose-600/20"
-                      >
-                        Hapus
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-    </div> 
+      {/* MODAL CUSTOM DELETE CHAT SESSION */}
+      {deletingSessionId && (
+        <div className="fixed inset-0 z-[60] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#111318] text-white rounded-2xl p-5 w-full max-w-xs border border-zinc-800 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 font-sans">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-rose-500/10 text-rose-500 rounded-xl border border-rose-500/20">
+                <Trash2 size={18} />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-white">Hapus Obrolan?</h3>
+                <p className="text-[11px] text-zinc-400">Riwayat percakapan ini akan dihapus permanen.</p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setDeletingSessionId(null)}
+                className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteSession}
+                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-lg shadow-rose-600/20"
+              >
+                Hapus
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

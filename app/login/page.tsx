@@ -71,7 +71,7 @@ export default function LoginPage() {
               <User size={15} className="absolute left-3.5 text-slate-400" />
               <input
                 type="text"
-                placeholder="Masukkan username bebas..."
+                placeholder="Masukkan username..."
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 className="w-full pl-10 pr-3 py-2.5 bg-slate-50/80 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-slate-800 transition font-medium"
