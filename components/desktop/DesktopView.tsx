@@ -35,13 +35,14 @@ import {
   AlertCircle,
   ArrowRightLeft,
   Calendar as CalendarIcon,
+  Search,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import BudgetSection from '@/components/budgetsection';
-import GoalsSection from '@/components/goalssection';
-import CalendarWidget from '@/components/calendarwidget';
-import InvestmentsSection from '@/components/investmentssection';
+import BudgetSection from '@/components/desktop/dbudgetsection';
+import GoalsSection from '@/components/desktop/dgoalsection';
+import CalendarWidget from '@/components/desktop/dcalendarwidget';
+import InvestmentsSection from '@/components/desktop/dinvestmentsection';
 import PiggyLottie from '@/components/PiggyLottie';
 
 interface DesktopViewProps {
@@ -170,6 +171,9 @@ export default function DesktopView(props: DesktopViewProps) {
   const [historyTab, setHistoryTab] = useState<'history' | 'recurring'>('history');
   const [localRecurringList, setLocalRecurringList] = useState<any[]>(initialRecurringList);
 
+  // Search Filter State untuk Expense / Transaction History
+  const [searchTerm, setSearchTerm] = useState('');
+
   useEffect(() => {
     setLocalRecurringList(initialRecurringList);
   }, [initialRecurringList]);
@@ -226,6 +230,30 @@ export default function DesktopView(props: DesktopViewProps) {
   });
 
   const totalCategoryAmount = filteredChartData.reduce((acc, item) => acc + item.value, 0);
+
+  // Filter Search Hasil Transaksi & Jadwal Rutin
+  const filteredTransactions = transactions.filter((t) => {
+    if (!searchTerm.trim()) return true;
+    const q = searchTerm.toLowerCase();
+    return (
+      (t.title && t.title.toLowerCase().includes(q)) ||
+      (t.category && t.category.toLowerCase().includes(q)) ||
+      (t.account && t.account.toLowerCase().includes(q)) ||
+      (t.amount && t.amount.toString().includes(q)) ||
+      (t.date && t.date.includes(q))
+    );
+  });
+
+  const filteredRecurringList = localRecurringList.filter((rec) => {
+    if (!searchTerm.trim()) return true;
+    const q = searchTerm.toLowerCase();
+    return (
+      (rec.title && rec.title.toLowerCase().includes(q)) ||
+      (rec.category && rec.category.toLowerCase().includes(q)) ||
+      (rec.account && rec.account.toLowerCase().includes(q)) ||
+      (rec.amount && rec.amount.toString().includes(q))
+    );
+  });
 
   const fetchRecurringTransactions = async () => {
     if (propFetchRecurringTransactions) {
@@ -744,7 +772,7 @@ export default function DesktopView(props: DesktopViewProps) {
                       {hiddenBalances.portfolio ? <EyeOff size={13} /> : <Eye size={13} />}
                     </button>
                   </div>
-                  <p className="text-xs font-medium text-slate-400">Total Portfolio</p>
+                  <p className="text-xs font-medium text-slate-400">Total Balance</p>
                   <h3 className="text-base font-bold text-slate-900">{formatAmount(totalNetWorth, 'portfolio')}</h3>
                 </div>
 
@@ -968,7 +996,7 @@ export default function DesktopView(props: DesktopViewProps) {
               />
 
               <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2 gap-2 flex-wrap">
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setHistoryTab('history')}
@@ -991,12 +1019,35 @@ export default function DesktopView(props: DesktopViewProps) {
                     </button>
                   </div>
 
-                  <button
-                    onClick={() => setShowManualAdd(!showManualAdd)}
-                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-xl flex items-center gap-1 transition cursor-pointer"
-                  >
-                    <Plus size={11} /> Add Transaction
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {/* SEARCH INPUT FITUR UNTUK TRANSACTION HISTORY & JADWAL RUTIN */}
+                    <div className="relative flex items-center">
+                      <Search size={12} className="absolute left-2.5 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search transaction..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-7 pr-6 py-1 text-[11px] bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-700 w-36 focus:w-48 transition-all"
+                      />
+                      {searchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchTerm('')}
+                          className="absolute right-2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => setShowManualAdd(!showManualAdd)}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-xl flex items-center gap-1 transition cursor-pointer shrink-0"
+                    >
+                      <Plus size={11} /> Add Transaction
+                    </button>
+                  </div>
                 </div>
 
                 {showManualAdd && (
@@ -1186,10 +1237,12 @@ export default function DesktopView(props: DesktopViewProps) {
                 {/* CONTENT PER TAB (HISTORY VS RECURRING) */}
                 {historyTab === 'history' ? (
                   <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
-                    {transactions.length === 0 ? (
-                      <p className="text-xs text-slate-400 text-center py-4">No transactions recorded.</p>
+                    {filteredTransactions.length === 0 ? (
+                      <p className="text-xs text-slate-400 text-center py-4">
+                        {searchTerm ? 'Tidak ada transaksi yang cocok dengan pencarian.' : 'No transactions recorded.'}
+                      </p>
                     ) : (
-                      transactions.map((t) => {
+                      filteredTransactions.map((t) => {
                         const isAuto = t.title?.startsWith('[Otomatis]');
                         return (
                           <div key={t.id} className="p-2 px-3 bg-slate-50/80 border border-slate-200/60 rounded-xl flex justify-between items-center text-xs hover:bg-slate-100/80 transition group">
@@ -1257,10 +1310,12 @@ export default function DesktopView(props: DesktopViewProps) {
                   </div>
                 ) : (
                   <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
-                    {localRecurringList.length === 0 ? (
-                      <p className="text-xs text-slate-400 text-center py-4">Belum ada jadwal transaksi rutin terdaftar.</p>
+                    {filteredRecurringList.length === 0 ? (
+                      <p className="text-xs text-slate-400 text-center py-4">
+                        {searchTerm ? 'Tidak ada jadwal rutin yang cocok dengan pencarian.' : 'Belum ada jadwal transaksi rutin terdaftar.'}
+                      </p>
                     ) : (
-                      localRecurringList.map((rec) => {
+                      filteredRecurringList.map((rec) => {
                         const getFreqText = () => {
                           if (rec.frequency === 'weekly') return 'Setiap minggu';
                           if (rec.frequency === 'interval_days') return `Setiap ${rec.interval_days} hari`;
@@ -1295,7 +1350,6 @@ export default function DesktopView(props: DesktopViewProps) {
                               </span>
                               
                               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                {/* BUTTON EDIT RECURRING */}
                                 <button
                                   onClick={() => {
                                     setEditingRecurring(rec);

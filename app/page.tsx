@@ -373,7 +373,6 @@ export default function Home() {
         setInput('');
         setSelectedFile(null);
 
-        // PERBAIKAN REFRESH OTOMATIS: Fetch ulang semua data transaksi, rutin & investasi
         await processRecurringTransactions(session.user.id);
         await fetchTransactions(session.user.id);
         await fetchRecurringTransactions(session.user.id);
@@ -466,37 +465,33 @@ export default function Home() {
 
   return (
     <>
+      {/* MOBILE VIEW DENGAN PROPS LENGKAP */}
       <MobileView
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         username={username}
-        onLogout={handleLogout}
-        hideBalance={false}
-        setHideBalance={() => {}}
         totalNetWorth={totalNetWorth}
         cashBalance={cashBalance}
         bankBalance={bankBalance}
         investmentBalance={investmentBalance}
         formatAmount={formatAmount}
+        hiddenBalances={hiddenBalances}
+        toggleHideBalance={toggleHideBalance}
+        handleOpenAdjust={handleOpenAdjust}
+        totalIncomeMonth={totalIncomeMonth}
+        totalExpenseMonth={totalExpenseMonth}
         transactions={transactions}
-        fetchTransactions={() => fetchTransactions()}
+        categoryChartData={categoryChartData}
+        COLORS={COLORS}
+        budgets={budgets}
+        goals={goals}
         fetchGoals={() => fetchGoals()}
         fetchInvestmentHoldings={() => fetchInvestmentHoldings()}
-        input={input}
-        setInput={setInput}
-        loading={loading}
-        handleSubmit={handleSubmit}
-        showManualAdd={showManualAdd}
-        setShowManualAdd={setShowManualAdd}
-        manualTitle={manualTitle}
-        setManualTitle={setManualTitle}
-        manualAmount={manualAmount}
-        setManualAmount={setManualAmount}
-        manualAccount="bank"
-        setManualAccount={() => {}}
-        handleManualAddSubmit={() => {}}
+        adjustModal={adjustModal}
+        setAdjustModal={setAdjustModal}
       />
 
+      {/* DESKTOP VIEW */}
       <DesktopView
         activeTab={activeTab as any}
         setActiveTab={setActiveTab as any}
