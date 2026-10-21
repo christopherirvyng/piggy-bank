@@ -408,7 +408,7 @@ export default function MobileView(props: MobileViewProps) {
                 <div className={`${card} flex flex-col gap-4 p-[18px]`}>
                   <div className="flex items-center gap-4">
                     <div className="relative size-[130px] shrink-0 flex items-center justify-center">
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 130, height: 130 }}>
                         <PieChart>
                           <Pie
                             data={filteredChartData.length > 0 ? filteredChartData : [{ name: 'Empty', value: 1 }]}

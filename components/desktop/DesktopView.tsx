@@ -921,7 +921,7 @@ export default function DesktopView(props: DesktopViewProps) {
                     ) : (
                       <div className="flex items-center gap-2 my-auto py-1">
                         <div className="h-24 w-24 shrink-0">
-                          <ResponsiveContainer width="100%" height="100%">
+                          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                             <PieChart>
                               <Pie
                                 data={filteredChartData}
