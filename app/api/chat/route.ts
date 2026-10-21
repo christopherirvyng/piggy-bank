@@ -8,117 +8,119 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.
 
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-function normalizeCategory(catRaw: string, type: string): string {
+function normalizeCategory(catRaw: string, type: string, promptText: string = ''): string {
   if (type === 'transfer') return 'Transfer';
 
   const cat = (catRaw || '').toLowerCase().trim();
+  const prompt = (promptText || '').toLowerCase().trim();
+  const combined = `${cat} ${prompt}`;
 
   if (
-    cat.includes('food') ||
-    cat.includes('drink') ||
-    cat.includes('makan') ||
-    cat.includes('jajan') ||
-    cat.includes('kuliner') ||
-    cat.includes('fnb') ||
-    cat.includes('beverage') ||
-    cat.includes('kopi') ||
-    cat.includes('restoran')
+    combined.includes('food') ||
+    combined.includes('drink') ||
+    combined.includes('makan') ||
+    combined.includes('jajan') ||
+    combined.includes('kuliner') ||
+    combined.includes('fnb') ||
+    combined.includes('beverage') ||
+    combined.includes('kopi') ||
+    combined.includes('restoran')
   ) {
     return 'Food & Drinks';
   }
 
   if (
-    cat.includes('trans') ||
-    cat.includes('gocar') ||
-    cat.includes('gojek') ||
-    cat.includes('grab') ||
-    cat.includes('ride') ||
-    cat.includes('parkir') ||
-    cat.includes('bensin') ||
-    cat.includes('tol') ||
-    cat.includes('ojek')
+    combined.includes('trans') ||
+    combined.includes('gocar') ||
+    combined.includes('gojek') ||
+    combined.includes('grab') ||
+    combined.includes('ride') ||
+    combined.includes('parkir') ||
+    combined.includes('bensin') ||
+    combined.includes('tol') ||
+    combined.includes('ojek')
   ) {
     return 'Transportation';
   }
 
   if (
-    cat.includes('util') ||
-    cat.includes('pln') ||
-    cat.includes('listrik') ||
-    cat.includes('water') ||
-    cat.includes('air') ||
-    cat.includes('pdam') ||
-    cat.includes('wifi') ||
-    cat.includes('internet') ||
-    cat.includes('pulsa') ||
-    cat.includes('kuota') ||
-    cat.includes('tagihan') ||
-    cat.includes('bill') ||
-    cat.includes('token') ||
-    cat.includes('spp') ||
-    cat.includes('sekolah') ||
-    cat.includes('kuliah')
+    combined.includes('util') ||
+    combined.includes('pln') ||
+    combined.includes('listrik') ||
+    combined.includes('water') ||
+    combined.includes('air') ||
+    combined.includes('pdam') ||
+    combined.includes('wifi') ||
+    combined.includes('internet') ||
+    combined.includes('pulsa') ||
+    combined.includes('kuota') ||
+    combined.includes('tagihan') ||
+    combined.includes('bill') ||
+    combined.includes('token') ||
+    combined.includes('spp') ||
+    combined.includes('sekolah') ||
+    combined.includes('kuliah')
   ) {
     return 'Utilities';
   }
 
   if (
-    cat.includes('enter') ||
-    cat.includes('game') ||
-    cat.includes('movie') ||
-    cat.includes('bioskop') ||
-    cat.includes('park') ||
-    cat.includes('hiburan') ||
-    cat.includes('netflix') ||
-    cat.includes('spotify') ||
-    cat.includes('steam')
+    combined.includes('enter') ||
+    combined.includes('game') ||
+    combined.includes('movie') ||
+    combined.includes('bioskop') ||
+    combined.includes('park') ||
+    combined.includes('hiburan') ||
+    combined.includes('netflix') ||
+    combined.includes('spotify') ||
+    combined.includes('steam')
   ) {
     return 'Entertainment';
   }
 
   if (
-    cat.includes('health') ||
-    cat.includes('sehat') ||
-    cat.includes('dokter') ||
-    cat.includes('obat') ||
-    cat.includes('apotek') ||
-    cat.includes('rumah sakit') ||
-    cat.includes('asuransi') ||
-    cat.includes('bpjs') ||
-    cat.includes('clinic')
+    combined.includes('health') ||
+    combined.includes('sehat') ||
+    combined.includes('dokter') ||
+    combined.includes('obat') ||
+    combined.includes('apotek') ||
+    combined.includes('rumah sakit') ||
+    combined.includes('asuransi') ||
+    combined.includes('bpjs') ||
+    combined.includes('clinic')
   ) {
     return 'Healthcare';
   }
 
   if (
-    cat.includes('invest') ||
-    cat.includes('saham') ||
-    cat.includes('crypto') ||
-    cat.includes('kripto') ||
-    cat.includes('reksadana') ||
-    cat.includes('dividen') ||
-    cat.includes('yield')
+    combined.includes('invest') ||
+    combined.includes('saham') ||
+    combined.includes('crypto') ||
+    combined.includes('kripto') ||
+    combined.includes('reksadana') ||
+    combined.includes('dividen') ||
+    combined.includes('yield')
   ) {
     return 'Investment';
   }
 
   if (
-    cat.includes('bonus') ||
-    cat.includes('thr') ||
-    cat.includes('insentif') ||
-    cat.includes('reward') ||
-    cat.includes('komisi')
+    combined.includes('bonus') ||
+    combined.includes('thr') ||
+    combined.includes('insentif') ||
+    combined.includes('reward') ||
+    combined.includes('komisi')
   ) {
     return 'Bonus';
   }
 
   if (
-    cat.includes('gaji') ||
-    cat.includes('salary') ||
-    cat.includes('digaji') ||
-    cat.includes('wage') ||
-    cat.includes('paycheck') ||
-    cat.includes('pemasukan')
+    combined.includes('gaji') ||
+    combined.includes('salary') ||
+    combined.includes('digaji') ||
+    combined.includes('wage') ||
+    combined.includes('paycheck') ||
+    combined.includes('pemasukan')
   ) {
     return 'Salary';
   }
@@ -169,6 +171,41 @@ function extractRealAmount(promptText: string, aiAmount: number): number {
   }
 
   return aiAmount;
+}
+
+function parseExplicitDateFromPrompt(promptText: string, todayStr: string): string | null {
+  const lower = promptText.toLowerCase();
+  const months: { [key: string]: string } = {
+    jan: '01', januari: '01',
+    feb: '02', februari: '02',
+    mar: '03', maret: '03',
+    apr: '04', april: '04',
+    mei: '05', may: '05',
+    jun: '06', juni: '06',
+    jul: '07', juli: '07',
+    agu: '08', agustus: '08', aug: '08',
+    sep: '09', september: '09',
+    okt: '10', oktober: '10', oct: '10',
+    nov: '11', november: '11',
+    des: '12', desember: '12', dec: '12'
+  };
+
+  const matchDate = lower.match(/(\d{1,2})\s*(jan|januari|feb|februari|mar|maret|apr|april|mei|may|jun|juni|jul|juli|agu|agustus|aug|sep|september|okt|oktober|oct|nov|november|des|desember|dec)/i);
+  if (matchDate) {
+    const day = matchDate[1].padStart(2, '0');
+    const monthKey = matchDate[2].toLowerCase();
+    const month = months[monthKey];
+    const year = todayStr.split('-')[0];
+    if (month) return `${year}-${month}-${day}`;
+  }
+
+  if (lower.includes('kemarin')) {
+    const d = new Date(todayStr);
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split('T')[0];
+  }
+
+  return null;
 }
 
 function parseIntervalDaysFromPrompt(promptText: string): number | null {
@@ -247,21 +284,25 @@ Your job is to strictly parse user prompts or receipts into JSON.
 
 CURRENT TODAY DATE IS: ${todayStr}
 
+DATE PARSING RULES:
+- If the user explicitly mentions a date (e.g., "18 okt", "18 oktober", "kemarin", "2 hari lalu"), extract and calculate the exact target date in "YYYY-MM-DD" format using CURRENT TODAY DATE as reference.
+- If no date is specified in prompt, set "date": "${todayStr}".
+
 CURRENT USER BALANCES:
 - Cash Balance: Rp ${balances.cash ?? 0}
 - Bank Balance: Rp ${balances.bank ?? 0}
 - Investment Balance: Rp ${balances.investment ?? 0}
 
 ALLOWED CATEGORIES ONLY:
-- "Food & Drinks"
-- "Transportation"
-- "Utilities"
-- "Entertainment"
-- "Healthcare"
-- "Investment"
-- "Salary"
-- "Bonus"
-- "Transfer"
+- "Food & Drinks" (Meals, drinks, food, coffee, restaurants, etc.)
+- "Transportation" (Gojek, Grab, gas, parking, transport, etc.)
+- "Utilities" (Bills, wifi, electricity, phone credit, SPP, etc.)
+- "Entertainment" (Movies, games, netflix, spotify, etc.)
+- "Healthcare" (Doctors, medicine, pharmacy, etc.)
+- "Investment" (Stocks, crypto, mutual funds, etc.)
+- "Salary" (Wages, income)
+- "Bonus" (THR, incentives)
+- "Transfer" (Transfers between accounts)
 - "Others"
 
 RECURRING RULES:
@@ -279,17 +320,17 @@ RECURRING RULES:
 MANDATORY JSON FORMAT:
 {
   "isReset": false,
-  "is_recurring": true,
-  "frequency": "interval_days",
-  "interval_days": 30,
+  "is_recurring": false,
+  "frequency": null,
+  "interval_days": null,
   "day_of_month": null,
-  "title": "Bayar Biaya SPP",
-  "amount": 1000000,
+  "title": "Makan Nasi Goreng",
+  "amount": 16000,
   "type": "expense",
-  "category": "Utilities",
+  "category": "Food & Drinks",
   "account": "bank",
   "to_account": null,
-  "date": "${todayStr}"
+  "date": "2026-10-18"
 }
 `;
 
@@ -310,19 +351,15 @@ MANDATORY JSON FORMAT:
       const payloadContents = contents.length > 0 ? contents : ['0'];
 
       try {
-        response = await generateWithTimeout(ai, 'gemini-2.5-flash', payloadContents, systemInstruction, 10000);
+        response = await generateWithTimeout(ai, 'gemini-3.5-flash-lite', payloadContents, systemInstruction, 10000);
       } catch (err1) {
         try {
-          response = await generateWithTimeout(ai, 'gemini-3.1-flash-lite', payloadContents, systemInstruction, 10000);
+          response = await generateWithTimeout(ai, 'gemini-3.8-flash', payloadContents, systemInstruction, 10000);
         } catch (err2) {
           try {
-            response = await generateWithTimeout(ai, 'gemini-3.5-flash-lite', payloadContents, systemInstruction, 10000);
+            response = await generateWithTimeout(ai, 'gemini-3.1-flash-lite', payloadContents, systemInstruction, 10000);
           } catch (err3) {
-            try {
-              response = await generateWithTimeout(ai, 'gemini-3.5-flash', payloadContents, systemInstruction, 10000);
-            } catch (err4) {
-              response = null;
-            }
+            response = null;
           }
         }
       }
@@ -352,6 +389,15 @@ MANDATORY JSON FORMAT:
       };
     }
 
+    // Tangani Ekstraksi Tanggal
+    const explicitDate = parseExplicitDateFromPrompt(userPrompt, todayStr);
+    if (explicitDate) {
+      parsedData.date = explicitDate;
+    } else if (!parsedData.date) {
+      parsedData.date = todayStr;
+    }
+
+    // Tangani Rutin
     const intervalDays = parseIntervalDaysFromPrompt(userPrompt);
     const monthlyDay = parseMonthlyDayFromPrompt(userPrompt);
 
@@ -372,7 +418,7 @@ MANDATORY JSON FORMAT:
     if (parsedData.to_account) {
       parsedData.to_account = sanitizeAccount(parsedData.to_account);
     }
-    parsedData.category = normalizeCategory(parsedData.category, parsedData.type);
+    parsedData.category = normalizeCategory(parsedData.category, parsedData.type, userPrompt);
 
     if (parsedData.type === 'transfer') {
       const fromName = parsedData.account.toUpperCase();
@@ -382,7 +428,6 @@ MANDATORY JSON FORMAT:
 
     if (!parsedData.isReset) {
       if (parsedData.is_recurring) {
-        // 1. Simpan ke tabel recurring_transactions (Jadwal Rutin)
         const payload: any = {
           title: parsedData.title || 'Transaksi Rutin',
           amount: Number(parsedData.amount) || 0,
@@ -391,7 +436,7 @@ MANDATORY JSON FORMAT:
           account: parsedData.account || 'bank',
           to_account: parsedData.type === 'transfer' ? parsedData.to_account || 'bank' : null,
           frequency: parsedData.frequency || 'monthly',
-          last_executed_date: todayStr,
+          last_executed_date: parsedData.date || todayStr,
           user_id: user.id,
         };
 
@@ -411,8 +456,6 @@ MANDATORY JSON FORMAT:
           );
         }
 
-        // 2. LAKUKAN JUGA INSERT 1x PERDANA KE TABEL transactions (Transaksi Harian)
-        // Agar langsung muncul di Kalender dan Riwayat Hari Ini!
         await supabaseAdmin.from('transactions').insert([
           {
             title: `[Otomatis] ${parsedData.title || 'Transaksi Rutin'}`,
@@ -421,13 +464,12 @@ MANDATORY JSON FORMAT:
             category: parsedData.category || 'Others',
             account: parsedData.account || 'bank',
             to_account: parsedData.type === 'transfer' ? parsedData.to_account || 'bank' : null,
-            date: todayStr,
+            date: parsedData.date || todayStr,
             user_id: user.id,
           },
         ]);
 
       } else {
-        // Jika Transaksi Biasa
         const { error: dbError } = await supabaseAdmin.from('transactions').insert([
           {
             title: parsedData.title || 'Transaksi',
